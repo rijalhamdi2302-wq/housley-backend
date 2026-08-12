@@ -1,0 +1,10 @@
+◇ injected env (3) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+✓ Connected to MongoDB
+⚠ Wiped all existing collections.
+  ✓ Asyraf Bin Md Rusli (provider) — no PIN yet
+  ✓ Noraini Binti Abdul Wahab (grocery_spender) — no PIN yet
+  ✓ Rijal Hamdi Bin Asyraf (member) — PIN 2302 set
+  ✓ Faten Arij Binti Asyraf (dependent) — no PIN yet
+  ✓ Alya Izzati Binti Asyraf (dependent) — no PIN yet
+✓ Seeded family, members, first period, balances and default categories.
+  Tip: log in as Rijal with PIN 2302, or open any other profile to create its PIN.
