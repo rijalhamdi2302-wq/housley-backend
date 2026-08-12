@@ -3,9 +3,6 @@
  * Mounts every route under /api, applies security middleware and rate limits.
  */
 
-const app = express();
-app.set('trust proxy', 1); // trust first proxy (Render's load balancer)
-
 require('dotenv').config();
 
 const path = require('path');
@@ -28,6 +25,7 @@ if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 16) {
 }
 
 const app = express();
+app.set('trust proxy', 1);
 
 // --- Security middleware ----------------------------------------------------
 app.use(
