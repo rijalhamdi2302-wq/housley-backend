@@ -117,6 +117,9 @@ router.post(
       );
     }
 
+    // #30 confetti rain on monthly review — did the family stay under budget?
+    const underBudget = gb && gb.budgetAmount > 0 ? gb.spent <= gb.budgetAmount : null;
+
     await logActivity({
       familyId: family._id,
       actor: req.user,
@@ -130,8 +133,17 @@ router.post(
       type: 'period_opened',
       message: `A new ${family.periodType} period has started (${family.rolloverPolicy === 'carry_forward' ? 'balance carried forward' : 'balance reset to zero'}).`,
     });
+    if (underBudget) {
+      await logActivity({
+        familyId: family._id,
+        actor: req.user,
+        type: 'period_under_budget',
+        message: `🏆 The family closed the period under budget — ${(gb.budgetAmount / 100).toFixed(2)} budget, ${(gb.spent / 100).toFixed(2)} spent. Confetti time!`,
+        amount: Math.max(0, gb.budgetAmount - gb.spent),
+      });
+    }
 
-    res.json({ closed: active, opened: next, rolloverPolicy: family.rolloverPolicy });
+    res.json({ closed: active, opened: next, rolloverPolicy: family.rolloverPolicy, underBudget });
   })
 );
 

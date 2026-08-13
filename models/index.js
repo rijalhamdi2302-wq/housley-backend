@@ -44,6 +44,8 @@ const userSchema = new mongoose.Schema(
     biometricEnabled: { type: Boolean, default: false },
     avatarColor: { type: String, default: '#ff6f91' },
     avatarPhoto: { type: String, default: null }, // small base64 data URL — the member's own photo
+    // Provider-set max a member may spend from Groceries in one trip (sen; 0 = unlimited)
+    groceryTripLimit: { type: Number, default: 0, min: 0 },
     // PIN lockout fields
     failedAttempts: { type: Number, default: 0, min: 0 },
     lockedUntil: { type: Date, default: null },
@@ -62,6 +64,7 @@ userSchema.methods.toSafeJSON = function () {
     avatarPhoto: this.avatarPhoto || null,
     hasPin: Boolean(this.pinHash),
     biometricEnabled: Boolean(this.biometricEnabled),
+    groceryTripLimit: this.groceryTripLimit || 0,
   };
 };
 
@@ -232,6 +235,10 @@ const activityLogSchema = new mongoose.Schema(
         'expense_edited',
         'expense_deleted',
         'funding_deleted',
+        'chore_approved',
+        'shoutout',
+        'roundup_saved',
+        'period_under_budget',
       ],
       required: true,
     },
@@ -269,11 +276,13 @@ const groceryCatalogItemSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true, maxlength: 120 },
     category: { type: String, trim: true, maxlength: 60, default: 'Other' },
     stockStatus: { type: String, enum: ['in_stock', 'low', 'out'], default: 'in_stock' },
+    barcode: { type: String, trim: true, maxlength: 32, default: '' }, // EAN-13 / UPC etc.
     timesBought: { type: Number, default: 0, min: 0 },
     lastBoughtAt: { type: Date, default: null },
   },
   { timestamps: true }
 );
+groceryCatalogItemSchema.index({ familyId: 1, barcode: 1 }, { unique: true, partialFilterExpression: { barcode: { $type: 'string', $ne: '' } } });
 groceryCatalogItemSchema.index({ familyId: 1, name: 1 }, { unique: true });
 
 // ---------------------------------------------------------------------------
@@ -320,6 +329,15 @@ const recurringBillSchema = new mongoose.Schema(
 // ---------------------------------------------------------------------------
 // SavingsGoal — standalone aspirational tracker
 // ---------------------------------------------------------------------------
+const goalContributionSchema = new mongoose.Schema(
+  {
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    amount: { type: Number, required: true, min: 1 },
+    at: { type: Date, default: Date.now },
+  },
+  { _id: false }
+);
+
 const savingsGoalSchema = new mongoose.Schema(
   {
     familyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Family', required: true, index: true },
@@ -329,9 +347,88 @@ const savingsGoalSchema = new mongoose.Schema(
     reached: { type: Boolean, default: false },
     reachedAt: { type: Date, default: null },
     emoji: { type: String, default: '🎯' },
+    // #24 savings together — who contributed what (powers the leaderboard)
+    contributions: { type: [goalContributionSchema], default: [] },
+    // #25 birthday & event funds — an optional date the family is saving toward
+    type: { type: String, enum: ['normal', 'event'], default: 'normal' },
+    eventDate: { type: Date, default: null },
+    // #6 round-up savings — spare change from expenses lands here automatically
+    isRoundup: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
+
+// ---------------------------------------------------------------------------
+// MealPlan — weekly dinner plans (feature #15)
+// ---------------------------------------------------------------------------
+const mealPlanSchema = new mongoose.Schema(
+  {
+    familyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Family', required: true, index: true },
+    date: { type: Date, required: true }, // calendar day (YYYY-MM-DD at midnight)
+    meal: { type: String, enum: ['dinner', 'lunch', 'breakfast'], default: 'dinner' },
+    title: { type: String, required: true, trim: true, maxlength: 80 },
+    emoji: { type: String, default: '🍲' },
+    ingredients: { type: [String], default: [] }, // free-text ingredient lines
+    note: { type: String, trim: true, maxlength: 200, default: '' },
+    createdById: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  },
+  { timestamps: true }
+);
+mealPlanSchema.index({ familyId: 1, date: 1 });
+
+// ---------------------------------------------------------------------------
+// Chore — chore-to-allowance (feature #19)
+// ---------------------------------------------------------------------------
+const choreSchema = new mongoose.Schema(
+  {
+    familyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Family', required: true, index: true },
+    title: { type: String, required: true, trim: true, maxlength: 100 },
+    emoji: { type: String, default: '🧹' },
+    reward: { type: Number, required: true, min: 1 }, // sen paid on approval
+    assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    createdById: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    status: { type: String, enum: ['pending', 'done', 'approved'], default: 'pending' },
+    completedAt: { type: Date, default: null },
+    approvedAt: { type: Date, default: null },
+    approvedById: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  },
+  { timestamps: true }
+);
+choreSchema.index({ familyId: 1, status: 1, assignedTo: 1 });
+
+// ---------------------------------------------------------------------------
+// Shoutout — family thank-you feed (feature #21)
+// ---------------------------------------------------------------------------
+const shoutoutSchema = new mongoose.Schema(
+  {
+    familyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Family', required: true, index: true },
+    authorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    authorName: { type: String, default: '' },
+    text: { type: String, required: true, trim: true, maxlength: 300 },
+    emoji: { type: String, default: '💛' },
+    reacts: {
+      type: [{ emoji: { type: String }, userIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }] }],
+      default: [],
+    },
+  },
+  { timestamps: true }
+);
+shoutoutSchema.index({ familyId: 1, createdAt: -1 });
+
+// ---------------------------------------------------------------------------
+// PinNote — family noticeboard (feature #22)
+// ---------------------------------------------------------------------------
+const pinNoteSchema = new mongoose.Schema(
+  {
+    familyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Family', required: true, index: true },
+    authorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    authorName: { type: String, default: '' },
+    text: { type: String, required: true, trim: true, maxlength: 300 },
+    color: { type: String, default: '#ffe3e9' },
+  },
+  { timestamps: true }
+);
+pinNoteSchema.index({ familyId: 1, createdAt: -1 });
 
 // ---------------------------------------------------------------------------
 // Register & export
@@ -352,4 +449,8 @@ module.exports = {
   CategoryBudget: mongoose.model('CategoryBudget', categoryBudgetSchema),
   RecurringBill: mongoose.model('RecurringBill', recurringBillSchema),
   SavingsGoal: mongoose.model('SavingsGoal', savingsGoalSchema),
+  MealPlan: mongoose.model('MealPlan', mealPlanSchema),
+  Chore: mongoose.model('Chore', choreSchema),
+  Shoutout: mongoose.model('Shoutout', shoutoutSchema),
+  PinNote: mongoose.model('PinNote', pinNoteSchema),
 };

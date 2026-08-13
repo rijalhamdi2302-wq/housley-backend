@@ -285,6 +285,162 @@ router.get(
   })
 );
 
+/** GET /api/analytics/payment-method — cash vs card vs e-wallet (all history). */
+router.get(
+  '/payment-method',
+  ah(async (req, res) => {
+    const family = await getFamily();
+    const expenses = await ExpenseTransaction.find({ familyId: family._id })
+      .select('amount paymentMethod')
+      .lean();
+    const rows = groupBy(expenses, (e) => e.paymentMethod || 'cash');
+    rows.sort((a, b) => b.value - a.value);
+    const labels = {
+      cash: 'Cash',
+      online_banking: 'Online banking',
+      credit_card: 'Credit card',
+      e_wallet: 'E-wallet',
+    };
+    res.json({
+      data: rows.map((r) => ({ name: labels[r.key] || r.key, key: r.key, amount: r.value, trips: r.items.length })),
+    });
+  })
+);
+
+/** GET /api/analytics/streak — days under budget + current streak (#29). */
+router.get(
+  '/streak',
+  ah(async (req, res) => {
+    const family = await getFamily();
+    const period = await getActivePeriod(family._id);
+    if (!period) return res.json({ days: [], streak: 0, best: 0 });
+    const { getGroceryBalance } = require('./helpers');
+    const gb = await getGroceryBalance(family._id, period._id);
+    const expenses = await ExpenseTransaction.find({ familyId: family._id, periodId: period._id })
+      .select('amount createdAt')
+      .lean();
+
+    const dayCount = Math.min(60, Math.max(7, Math.ceil((period.endDate - period.startDate) / 86400000)));
+    const perDayBudget = gb.budgetAmount > 0 ? gb.budgetAmount / dayCount : null;
+
+    const days = [];
+    const dailySpend = new Map();
+    for (const e of expenses) {
+      const d = new Date(e.createdAt);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      dailySpend.set(key, (dailySpend.get(key) || 0) + e.amount);
+    }
+    const today = new Date();
+    for (let i = dayCount - 1; i >= 0; i--) {
+      const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const spent = dailySpend.get(key) || 0;
+      const under = perDayBudget === null ? spent === 0 || spent <= gb.budgetAmount : spent <= perDayBudget;
+      days.push({ key, date: d.toISOString().slice(0, 10), spent, under });
+    }
+
+    // current streak: consecutive under-budget days ending today (skip future/empty tail)
+    let streak = 0;
+    for (let i = days.length - 1; i >= 0; i--) {
+      if (days[i].date > today.toISOString().slice(0, 10)) continue;
+      if (days[i].under) streak += 1;
+      else break;
+    }
+    let best = 0;
+    let run = 0;
+    for (const d of days) {
+      run = d.under ? run + 1 : 0;
+      best = Math.max(best, run);
+    }
+    res.json({ days, streak, best, perDayBudget, budgetAmount: gb.budgetAmount });
+  })
+);
+
+/** GET /api/analytics/badges — computed achievements from real data (#27). */
+router.get(
+  '/badges',
+  ah(async (req, res) => {
+    const family = await getFamily();
+    const { User, SavingsGoal, GroceryChecklistItem, Shop } = require('../models');
+    const expenses = await ExpenseTransaction.find({ familyId: family._id })
+      .select('amount shopName createdAt type spentById paymentMethod receiptImage')
+      .lean();
+    const goals = await SavingsGoal.find({ familyId: family._id }).lean();
+    const checklist = await GroceryChecklistItem.find({ familyId: family._id }).lean();
+    const users = await User.find({ familyId: family._id }).select('name role').lean();
+    const shops = await Shop.find({ familyId: family._id }).select('name usageCount').lean();
+
+    const badges = [];
+    const add = (id, emoji, name, desc, earned, meta = {}) =>
+      badges.push({ id, emoji, name, desc, earned, ...meta });
+
+    const groceries = expenses.filter((e) => e.type === 'groceries');
+    // First trip
+    add('first_trip', '🌱', 'First Trip', 'Logged your first groceries trip', groceries.length > 0, { count: groceries.length });
+    // 10 trips
+    add('ten_trips', '🛒', 'Regular Shopper', '10 groceries trips logged', groceries.length >= 10, { count: groceries.length });
+    // Receipt keeper — attached 5 receipt photos
+    const withReceipts = expenses.filter((e) => e.receiptImage).length;
+    add('receipt_keeper', '🧾', 'Receipt Keeper', 'Attached 5 receipt photos', withReceipts >= 5, { count: withReceipts });
+    // Goal crusher
+    const reached = goals.filter((g) => g.reached).length;
+    add('goal_crusher', '🎯', 'Goal Crusher', 'Reached a savings goal', reached >= 1, { count: reached });
+    // Cheapest shop 5 times — compare against average shop spend
+    const byShop = groupBy(groceries, (e) => (e.shopName || '').trim().toLowerCase() || 'unknown');
+    byShop.sort((a, b) => a.value / a.items.length - b.value / b.items.length);
+    const cheapestKey = byShop.length ? byShop[0].key : null;
+    const cheapestTrips = cheapestKey ? byShop[0].items.length : 0;
+    add('savvy_shopper', '🧠', 'Savvy Shopper', 'Shopped at the cheapest store 5 times', cheapestTrips >= 5, { count: cheapestTrips });
+    // Checklist champion — checked off 10 items
+    const checked = checklist.filter((c) => c.checked).length;
+    add('list_master', '✅', 'List Master', 'Tick off 10 shopping-list items', checked >= 10, { count: checked });
+    // Team player — funded someone else
+    const { FundingTransaction } = require('../models');
+    const fundedOthers = await FundingTransaction.countDocuments({ familyId: family._id, userId: { $ne: null } });
+    add('generous', '💝', 'Generous Heart', 'Top up someone’s personal balance', fundedOthers > 0, { count: fundedOthers });
+    // All in — every member spent
+    const spenderIds = new Set(expenses.map((e) => String(e.spentById)));
+    add('all_in', '👨‍👩‍👧‍👦', 'All In', 'Every member logged a spend', spenderIds.size >= users.length, { count: spenderIds.size });
+
+    // House points = sum of earned badge weights
+    const points = badges.reduce((s, b) => s + (b.earned ? b.weight || 10 : 0), 0);
+    const totalPossible = badges.length * 10;
+    res.json({ badges, points, totalPossible });
+  })
+);
+
+/** GET /api/analytics/pet — the savings pet's current mood (#28). */
+router.get(
+  '/pet',
+  ah(async (req, res) => {
+    const family = await getFamily();
+    const period = await getActivePeriod(family._id);
+    if (!period) return res.json({ mood: 'sleepy', level: 0 });
+    const { getGroceryBalance, getPersonalBalance } = require('./helpers');
+    const { User, SavingsGoal } = require('../models');
+    const gb = await getGroceryBalance(family._id, period._id);
+    const users = await User.find({ familyId: family._id }).select('_id').lean();
+    let fundedTotal = gb.funded;
+    let spentTotal = gb.spent;
+    for (const u of users) {
+      const pb = await getPersonalBalance(u._id, period._id);
+      fundedTotal += pb.funded;
+      spentTotal += pb.spent;
+    }
+    const goals = await SavingsGoal.find({ familyId: family._id }).lean();
+    const goalPct = goals.length
+      ? goals.reduce((s, g) => s + Math.min(100, (g.currentAmount / Math.max(1, g.targetAmount)) * 100), 0) / goals.length
+      : 0;
+    const saved = Math.max(0, fundedTotal - spentTotal);
+    const ratio = fundedTotal > 0 ? saved / fundedTotal : 0;
+    let score = Math.round(goalPct * 0.5 + ratio * 50 + Math.min(20, saved / 100000)); // 0..~100
+    const mood =
+      score >= 70 ? 'ecstatic' : score >= 45 ? 'happy' : score >= 20 ? 'neutral' : 'sleepy';
+    const level = Math.min(5, Math.floor(score / 20) + 1);
+    res.json({ mood, level, score, saved, goalPct, ratio });
+  })
+);
+
 /** GET /api/analytics/personal/:userId/category — self or provider only. */
 router.get(
   '/personal/:userId/category',

@@ -333,6 +333,133 @@ async function main() {
   const ts = await req('GET', '/analytics/top-shops', { token: rijalToken });
   check('top shops listed', ts.status === 200 && ts.data.data.length >= 1 && typeof ts.data.data[0].trips === 'number');
 
+  console.log('\n== Analytics v2 (payment method, streak, badges, pet) ==');
+  const pm = await req('GET', '/analytics/payment-method', { token: rijalToken });
+  check('payment-method breakdown', pm.status === 200 && Array.isArray(pm.data.data) && pm.data.data.length >= 1, JSON.stringify(pm.data).slice(0, 120));
+  check('payment-method sums match spend', pm.data.data.reduce((s, d) => s + d.amount, 0) > 0);
+  const streak = await req('GET', '/analytics/streak', { token: rijalToken });
+  check('streak endpoint returns days array', streak.status === 200 && Array.isArray(streak.data.days) && streak.data.days.length >= 7, JSON.stringify(streak.data).slice(0, 120));
+  check('streak is a number', typeof streak.data.streak === 'number' && streak.data.streak >= 0);
+  const badges = await req('GET', '/analytics/badges', { token: rijalToken });
+  check('badges list computed', badges.status === 200 && Array.isArray(badges.data.badges) && badges.data.badges.length >= 5, JSON.stringify(badges.data).slice(0, 140));
+  check('badges have earned flags', badges.data.badges.every((b) => typeof b.earned === 'boolean'));
+  const pet = await req('GET', '/analytics/pet', { token: rijalToken });
+  check('savings pet state', pet.status === 200 && ['sleepy', 'neutral', 'happy', 'ecstatic'].includes(pet.data.mood));
+
+  console.log('\n== Meal planner ==');
+  const meals = await req('GET', '/meals', { token: rijalToken });
+  check('meals listed', meals.status === 200 && Array.isArray(meals.data.meals));
+  const mealAdd = await req('POST', '/meals', { token: rijalToken, body: { date: '2026-08-16', title: 'Spaghetti Bolognese', ingredients: ['2x Pasta', '1x Tomato sauce', 'Beef'] } });
+  check('add meal plan', mealAdd.status === 201 && mealAdd.data.meal.title === 'Spaghetti Bolognese');
+  const gen = await req('POST', '/meals/generate-list', { token: rijalToken, body: { from: '2026-08-16', to: '2026-08-22' } });
+  check('generate shopping list from meals', gen.status === 200 && gen.data.items.length >= 3 && gen.data.estimatedSen > 0, JSON.stringify(gen.data).slice(0, 160));
+  const addList = await req('POST', '/meals/add-to-list', { token: rijalToken, body: { items: [{ name: 'Pasta', quantity: '2' }] } });
+  check('ingredients added to shopping list', addList.status === 201 && addList.data.added >= 1);
+  const dupList = await req('POST', '/meals/add-to-list', { token: rijalToken, body: { items: [{ name: 'Pasta', quantity: '2' }] } });
+  check('duplicate ingredient not re-added', dupList.status === 201 && dupList.data.added === 0);
+  const mealDel = await req('DELETE', `/meals/${mealAdd.data.meal._id}`, { token: rijalToken });
+  check('delete meal plan', mealDel.status === 200);
+
+  console.log('\n== Chores (chore-to-allowance) ==');
+  const chores = await req('GET', '/chores', { token: rijalToken });
+  check('chores listed', chores.status === 200 && Array.isArray(chores.data.chores));
+  const choreAsMember = await req('POST', '/chores', { token: rijalToken, body: { title: 'Wash dishes', reward: 500, assignedTo: rijal._id } });
+  check('member cannot create chores', choreAsMember.status === 403);
+  const choreAdd = await req('POST', '/chores', { token: dadToken, body: { title: 'Fold laundry', reward: 300, assignedTo: rijal._id } });
+  check('provider creates chore', choreAdd.status === 201);
+  const choreId = choreAdd.data.chore._id;
+  // sister already has PIN 3333 (set earlier by Mom in the reset-pin tests)
+  const sisterEarly = await req('POST', '/auth/verify-pin', { body: { userId: sister1._id, pin: '3333' } });
+  check('sister login prepared for chore test', sisterEarly.status === 200);
+  const sisterEarlyToken = sisterEarly.data.token;
+  const choreDoneOther = await req('PATCH', `/chores/${choreId}`, { token: sisterEarlyToken, body: { status: 'done' } });
+  check('non-assignee cannot mark done', choreDoneOther.status === 403);
+  const choreDone = await req('PATCH', `/chores/${choreId}`, { token: rijalToken, body: { status: 'done' } });
+  check('assignee marks chore done', choreDone.status === 200 && choreDone.data.chore.status === 'done');
+  const choreApproveAsMember = await req('POST', `/chores/${choreId}/approve`, { token: rijalToken });
+  check('member cannot approve chores', choreApproveAsMember.status === 403);
+  const balBeforeChore = (await req('GET', `/funding/balances/personal/${rijal._id}`, { token: dadToken })).data.balance;
+  const choreApprove = await req('POST', `/chores/${choreId}/approve`, { token: dadToken });
+  check('provider approves chore + reward funded', choreApprove.status === 200 && choreApprove.data.balance.currentBalance === balBeforeChore.currentBalance + 300, JSON.stringify(choreApprove.data).slice(0, 160));
+  const choreApproveAgain = await req('POST', `/chores/${choreId}/approve`, { token: dadToken });
+  check('already-approved chore cannot re-approve', choreApproveAgain.status === 409);
+  const choreDel = await req('DELETE', `/chores/${choreId}`, { token: dadToken });
+  check('delete chore', choreDel.status === 200);
+
+  console.log('\n== Social (shout-outs + pin board) ==');
+  const shout = await req('POST', '/social/shoutouts', { token: rijalToken, body: { text: 'Thanks Mama for the groceries! 💛' } });
+  check('post a shout-out', shout.status === 201);
+  const shoutId = shout.data.shoutout._id;
+  const shouts = await req('GET', '/social/shoutouts', { token: rijalToken });
+  check('shout-outs listed newest first', shouts.status === 200 && shouts.data.shoutouts.length >= 1);
+  const react = await req('POST', `/social/shoutouts/${shoutId}/react`, { token: dadToken, body: { emoji: '🎉' } });
+  check('react to shout-out', react.status === 200 && react.data.shoutout.reacts.some((r) => r.emoji === '🎉' && r.userIds.length === 1));
+  const reactBad = await req('POST', `/social/shoutouts/${shoutId}/react`, { token: dadToken, body: { emoji: '🧨' } });
+  check('unknown react rejected', reactBad.status === 400);
+  const reactOff = await req('POST', `/social/shoutouts/${shoutId}/react`, { token: dadToken, body: { emoji: '🎉' } });
+  check('react toggles off', reactOff.status === 200 && reactOff.data.shoutout.reacts.every((r) => r.emoji !== '🎉' || r.userIds.length === 0));
+  const noteAdd = await req('POST', '/social/notes', { token: momToken, body: { text: 'Bring tuition money Friday!' } });
+  check('pin a family note', noteAdd.status === 201);
+  const noteId = noteAdd.data.note._id;
+  const notes = await req('GET', '/social/notes', { token: rijalToken });
+  check('notes listed for everyone', notes.status === 200 && notes.data.notes.length >= 1);
+  const noteDelOther = await req('DELETE', `/social/notes/${noteId}`, { token: rijalToken });
+  check('non-author cannot delete note', noteDelOther.status === 403);
+  const noteDel = await req('DELETE', `/social/notes/${noteId}`, { token: momToken });
+  check('author deletes note', noteDel.status === 200);
+
+  console.log('\n== Round-up, trip limits, receipt→list matching ==');
+  const checkAdd = await req('POST', '/checklist', { token: rijalToken, body: { name: 'Milk', quantity: '1' } });
+  check('checklist item added for match test', checkAdd.status === 201);
+  const expWithItems = await req('POST', '/expenses/groceries', {
+    token: rijalToken,
+    body: { shopName: 'Speedmart', amount: 4250, paymentMethod: 'cash', lineItems: [{ name: 'Milk', quantity: 1, unitPrice: 700, totalPrice: 700 }, { name: 'Bread', quantity: 1, unitPrice: 350, totalPrice: 350 }] },
+  });
+  check('expense with line items saved', expWithItems.status === 201, JSON.stringify(expWithItems.data).slice(0, 160));
+  check('round-up saved to roundup goal (42.50 → 0.50)', expWithItems.data.roundup !== null && expWithItems.data.roundup.amount === 50, JSON.stringify(expWithItems.data.roundup));
+  check('receipt auto-matched checklist item', expWithItems.data.matchedChecklist === 1, `matched ${expWithItems.data.matchedChecklist}`);
+  const goalsAfterRoundup = await req('GET', '/goals', { token: rijalToken });
+  check('roundup goal exists', goalsAfterRoundup.status === 200 && goalsAfterRoundup.data.goals.some((g) => g.isRoundup && g.currentAmount === 50), JSON.stringify(goalsAfterRoundup.data.goals.map((g) => ({ name: g.name, isRoundup: g.isRoundup, cur: g.currentAmount }))));
+  const limitSet = await req('PATCH', `/family/limits/${rijal._id}`, { token: dadToken, body: { groceryTripLimit: 50000 } });
+  check('provider sets trip limit (RM 500)', limitSet.status === 200 && limitSet.data.groceryTripLimit === 50000);
+  const limitSetAsMember = await req('PATCH', `/family/limits/${rijal._id}`, { token: rijalToken, body: { groceryTripLimit: 100 } });
+  check('member cannot set trip limits', limitSetAsMember.status === 403);
+  const overLimitExp = await req('POST', '/expenses/groceries', {
+    token: rijalToken,
+    body: { shopName: 'Trip Limit Test', amount: 999999, paymentMethod: 'cash' },
+  });
+  check('over-limit trip flagged (no hard block)', overLimitExp.status === 201 && overLimitExp.data.overLimit !== null && overLimitExp.data.overLimit.limit === 50000, JSON.stringify(overLimitExp.data.overLimit));
+  const underLimitExp = await req('POST', '/expenses/groceries', {
+    token: rijalToken,
+    body: { shopName: 'Trip Limit Test 2', amount: 30000, paymentMethod: 'cash' },
+  });
+  check('under-limit trip not flagged', underLimitExp.status === 201 && underLimitExp.data.overLimit === null);
+  const limitClear = await req('PATCH', `/family/limits/${rijal._id}`, { token: dadToken, body: { groceryTripLimit: 0 } });
+  check('limit cleared (0 = unlimited)', limitClear.status === 200 && limitClear.data.groceryTripLimit === 0);
+
+  console.log('\n== Event goals + shared contributions (leaderboard) ==');
+  const eventGoal = await req('POST', '/goals', { token: rijalToken, body: { name: 'Alya’s birthday', targetAmount: 200000, type: 'event', eventDate: '2026-12-01' } });
+  check('event fund created', eventGoal.status === 201);
+  const eventGoalId = eventGoal.data.goal._id;
+  const contrib1 = await req('PATCH', `/goals/${eventGoalId}/contribute`, { token: rijalToken, body: { amount: 5000 } });
+  check('rijal contributes to event fund', contrib1.status === 200);
+  const contrib2 = await req('PATCH', `/goals/${eventGoalId}/contribute`, { token: dadToken, body: { amount: 15000 } });
+  check('dad contributes too', contrib2.status === 200);
+  const goalsList = await req('GET', '/goals', { token: rijalToken });
+  const eventGoalData = goalsList.data.goals.find((g) => g._id === eventGoalId);
+  check('event goal exposes daysLeft + monthlyTarget', eventGoalData && typeof eventGoalData.daysLeft === 'number' && eventGoalData.daysLeft > 0 && eventGoalData.monthlyTarget > 0, JSON.stringify(eventGoalData));
+  check('leaderboard ranks contributors', eventGoalData.leaderboard.length === 2 && eventGoalData.leaderboard[0].amount === 15000, JSON.stringify(eventGoalData.leaderboard));
+  const badEvent = await req('POST', '/goals', { token: rijalToken, body: { name: 'No date', targetAmount: 1000, type: 'event' } });
+  check('event fund without date rejected', badEvent.status === 400);
+
+  console.log('\n== Barcode catalog ==');
+  const barcodeAdd = await req('POST', '/catalog', { token: rijalToken, body: { name: 'Milo 3-in-1', barcode: '9551234500011' } });
+  check('catalog item saved with barcode', barcodeAdd.status === 201);
+  const barcodeFind = await req('GET', `/catalog?barcode=9551234500011`, { token: rijalToken });
+  check('catalog lookup by barcode', barcodeFind.status === 200 && barcodeFind.data.items.length === 1 && barcodeFind.data.items[0].name === 'Milo 3-in-1');
+  const barcodeDup = await req('POST', '/catalog', { token: rijalToken, body: { name: 'Milo Copy', barcode: '9551234500011' } });
+  check('duplicate barcode rejected', barcodeDup.status === 409);
+
   console.log('\n== Activity feed (visibility) ==');
   const actRijal = await req('GET', '/activity', { token: rijalToken });
   check('Rijal sees groceries + own activity', actRijal.status === 200 && actRijal.data.activity.length >= 5);
@@ -423,6 +550,20 @@ async function main() {
   const impOldRes = await req('POST', '/import/excel', { token: rijalToken, body: { data: impOld } });
   check('pre-period rows skipped with a clear message', impOldRes.status === 201 && impOldRes.data.imported === 0 && impOldRes.data.errors.length === 1 && /before the current period/.test(impOldRes.data.errors[0].message), JSON.stringify(impOldRes.data).slice(0, 180));
 
+  console.log('\n== Family settings ==');
+  const famGet = await req('GET', '/family', { token: rijalToken });
+  check('family settings readable', famGet.status === 200 && famGet.data.family.name);
+  const famSetAsMember = await req('PATCH', '/family', { token: rijalToken, body: { name: 'Hacked' } });
+  check('member cannot change family settings', famSetAsMember.status === 403);
+  const famRename = await req('PATCH', '/family', { token: dadToken, body: { name: 'The Asyraf Family' } });
+  check('provider renames family', famRename.status === 200 && famRename.data.family.name === 'The Asyraf Family');
+  const famType = await req('PATCH', '/family', { token: dadToken, body: { periodType: 'weekly' } });
+  check('provider switches period type + rebuilds period', famType.status === 200 && famType.data.family.periodType === 'weekly' && famType.data.periodRebuilt !== null, JSON.stringify(famType.data).slice(0, 140));
+  const famBack = await req('PATCH', '/family', { token: dadToken, body: { periodType: 'monthly' } });
+  check('switch back to monthly', famBack.status === 200 && famBack.data.family.periodType === 'monthly');
+  const famBad = await req('PATCH', '/family', { token: dadToken, body: { periodType: 'hourly' } });
+  check('invalid period type rejected', famBad.status === 400);
+
   console.log('\n== Change / refresh / logout ==');
   const changeWrong = await req('POST', '/auth/change-pin', { token: rijalToken, body: { currentPin: '1111', newPin: '7777' } });
   check('change-pin rejects wrong current PIN', changeWrong.status === 401);
@@ -496,6 +637,19 @@ async function main() {
   check('all PINs cleared after reset', profilesAfter.data.users.every((u) => u.hasPin === false));
   const balAfter = await req('GET', '/funding/balances/groceries', { token: dadToken });
   check('balances zeroed after reset', balAfter.status === 200 && balAfter.data.balance.currentBalance === 0 && balAfter.data.balance.spent === 0);
+  // v2 data must be wiped too
+  const shoutsAfter = await req('GET', '/social/shoutouts', { token: dadToken });
+  check('shout-outs wiped by reset', shoutsAfter.status === 200 && shoutsAfter.data.shoutouts.length === 0, JSON.stringify(shoutsAfter.data).slice(0, 120));
+  const notesAfter = await req('GET', '/social/notes', { token: dadToken });
+  check('pin-board notes wiped by reset', notesAfter.status === 200 && notesAfter.data.notes.length === 0);
+  const choresAfter = await req('GET', '/chores', { token: dadToken });
+  check('chores wiped by reset', choresAfter.status === 200 && choresAfter.data.chores.length === 0);
+  const mealsAfter = await req('GET', '/meals', { token: dadToken });
+  check('meal plans wiped by reset', mealsAfter.status === 200 && mealsAfter.data.meals.length === 0);
+  const goalsAfterReset = await req('GET', '/goals', { token: dadToken });
+  check('goals (incl. round-up & event) wiped by reset', goalsAfterReset.status === 200 && goalsAfterReset.data.goals.length === 0, JSON.stringify(goalsAfterReset.data.goals));
+  const checkAfter = await req('GET', '/checklist', { token: dadToken });
+  check('checklist wiped by reset', checkAfter.status === 200 && checkAfter.data.items.length === 0);
 
   console.log('\n========================================');
   console.log(`RESULT: ${passed} passed, ${failed} failed`);

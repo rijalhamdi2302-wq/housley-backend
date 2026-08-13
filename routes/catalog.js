@@ -16,7 +16,9 @@ router.get(
   '/',
   ah(async (req, res) => {
     const family = await getFamily();
-    const items = await GroceryCatalogItem.find({ familyId: family._id }).sort({
+    const q = { familyId: family._id };
+    if (req.query.barcode) q.barcode = String(req.query.barcode).trim();
+    const items = await GroceryCatalogItem.find(q).sort({
       category: 1,
       name: 1,
     });
@@ -36,24 +38,32 @@ router.get(
   })
 );
 
-/** POST /api/catalog — manually add an item not yet in the catalog. */
+/** POST /api/catalog — manually add an item not yet in the catalog (optionally with barcode). */
 router.post(
   '/',
   ah(async (req, res) => {
-    const { name, category } = req.body || {};
+    const { name, category, barcode } = req.body || {};
     const clean = String(name || '').trim();
     if (!clean) return res.status(400).json({ error: 'Item name is required.' });
     const family = await getFamily();
+    const cleanBarcode = String(barcode || '').trim().slice(0, 32);
     const existing = await GroceryCatalogItem.findOne({
       familyId: family._id,
       name: { $regex: `^${escapeRegex(clean)}$`, $options: 'i' },
     });
     if (existing) return res.status(409).json({ error: 'That item is already in the catalog.', item: existing });
+    if (cleanBarcode) {
+      const byBarcode = await GroceryCatalogItem.findOne({ familyId: family._id, barcode: cleanBarcode });
+      if (byBarcode) {
+        return res.status(409).json({ error: `That barcode already belongs to “${byBarcode.name}”.`, item: byBarcode });
+      }
+    }
     const item = await GroceryCatalogItem.create({
       familyId: family._id,
       name: clean.slice(0, 120),
       category: String(category || '').trim().slice(0, 60) || 'Other',
       stockStatus: 'in_stock',
+      barcode: cleanBarcode,
     });
     res.status(201).json({ item });
   })
@@ -68,7 +78,7 @@ router.patch(
     const item = await GroceryCatalogItem.findOne({ _id: id, familyId: family._id });
     if (!item) return res.status(404).json({ error: 'Catalog item not found.' });
 
-    const { stockStatus, category } = req.body || {};
+    const { stockStatus, category, barcode } = req.body || {};
     if (stockStatus !== undefined) {
       if (!['in_stock', 'low', 'out'].includes(stockStatus)) {
         return res.status(400).json({ error: 'Invalid stock status.' });
@@ -77,6 +87,20 @@ router.patch(
     }
     if (typeof category === 'string' && category.trim()) {
       item.category = category.trim().slice(0, 60);
+    }
+    if (barcode !== undefined) {
+      const cleanBarcode = String(barcode || '').trim().slice(0, 32);
+      if (cleanBarcode) {
+        const byBarcode = await GroceryCatalogItem.findOne({
+          familyId: family._id,
+          barcode: cleanBarcode,
+          _id: { $ne: item._id },
+        });
+        if (byBarcode) {
+          return res.status(409).json({ error: `That barcode already belongs to “${byBarcode.name}”.` });
+        }
+      }
+      item.barcode = cleanBarcode;
     }
     await item.save();
     res.json({ item });

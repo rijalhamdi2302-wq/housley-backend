@@ -5,7 +5,14 @@
  */
 
 const express = require('express');
-const { User, Shop, ExpenseTransaction, GroceryCatalogItem } = require('../models');
+const {
+  User,
+  Shop,
+  ExpenseTransaction,
+  GroceryCatalogItem,
+  GroceryChecklistItem,
+  SavingsGoal,
+} = require('../models');
 const { requireAuth } = require('../middleware/auth');
 const {
   ah,
@@ -143,6 +150,63 @@ router.post(
     balance.spent += amount;
     await balance.save();
 
+    // ---- #13 receipt → shopping list auto-match -----------------------------
+    // Any unchecked checklist item whose name matches a line item gets ticked
+    // off automatically, so the family doesn't double-manage the list.
+    let matchedChecklist = 0;
+    if (items.length) {
+      const checklist = await GroceryChecklistItem.find({
+        familyId: family._id,
+        checked: false,
+      });
+      const itemLower = new Set(items.map((i) => i.name.toLowerCase()));
+      for (const c of checklist) {
+        const name = (c.name || '').toLowerCase().trim();
+        if (name && itemLower.has(name)) {
+          c.checked = true;
+          await c.save();
+          matchedChecklist += 1;
+        }
+      }
+    }
+
+    // ---- #6 round-up savings ------------------------------------------------
+    // Every expense rounds up to the next ringgit and the spare change goes
+    // into the family's automatic round-up goal.
+    let roundup = null;
+    const spentSen = amount;
+    const remainder = spentSen % 100;
+    if (remainder > 0) {
+      const spare = 100 - remainder;
+      let goal = await SavingsGoal.findOne({ familyId: family._id, isRoundup: true });
+      if (!goal) {
+        goal = await SavingsGoal.create({
+          familyId: family._id,
+          name: 'Round-up savings',
+          targetAmount: 10000000, // effectively unlimited pot
+          currentAmount: 0,
+          emoji: '🐷',
+          isRoundup: true,
+        });
+      }
+      goal.currentAmount += spare;
+      goal.contributions.push({ userId: req.user._id, amount: spare, at: new Date() });
+      await goal.save();
+      roundup = { goalId: String(goal._id), amount: spare };
+    }
+
+    // ---- #23 per-member trip limit -------------------------------------------
+    // Provider-set max a member may spend from Groceries per trip. We warn
+    // (never hard-block — the money is already spent at the shop).
+    let overLimit = null;
+    if (req.user.groceryTripLimit > 0 && amount > req.user.groceryTripLimit) {
+      overLimit = {
+        limit: req.user.groceryTripLimit,
+        spent: amount,
+        over: amount - req.user.groceryTripLimit,
+      };
+    }
+
     const itemNames = items.map((i) => i.name).slice(0, 5);
     await logActivity({
       familyId: family._id,
@@ -156,7 +220,14 @@ router.post(
       meta: { shop: shop ? shop.name : cleanShopName, flags, items: itemNames },
     });
 
-    res.status(201).json({ expense, flags, balance: publicExpenseBalance(balance) });
+    res.status(201).json({
+      expense,
+      flags,
+      balance: publicExpenseBalance(balance),
+      roundup,
+      overLimit,
+      matchedChecklist,
+    });
   })
 );
 
