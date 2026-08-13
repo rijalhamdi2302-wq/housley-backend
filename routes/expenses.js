@@ -185,7 +185,7 @@ router.post(
           name: 'Round-up savings',
           targetAmount: 10000000, // effectively unlimited pot
           currentAmount: 0,
-          emoji: '🐷',
+          emoji: '💛',
           isRoundup: true,
         });
       }

@@ -333,7 +333,7 @@ async function main() {
   const ts = await req('GET', '/analytics/top-shops', { token: rijalToken });
   check('top shops listed', ts.status === 200 && ts.data.data.length >= 1 && typeof ts.data.data[0].trips === 'number');
 
-  console.log('\n== Analytics v2 (payment method, streak, badges, pet) ==');
+  console.log('\n== Analytics v2 (payment method, streak, badges) ==');
   const pm = await req('GET', '/analytics/payment-method', { token: rijalToken });
   check('payment-method breakdown', pm.status === 200 && Array.isArray(pm.data.data) && pm.data.data.length >= 1, JSON.stringify(pm.data).slice(0, 120));
   check('payment-method sums match spend', pm.data.data.reduce((s, d) => s + d.amount, 0) > 0);
@@ -343,8 +343,6 @@ async function main() {
   const badges = await req('GET', '/analytics/badges', { token: rijalToken });
   check('badges list computed', badges.status === 200 && Array.isArray(badges.data.badges) && badges.data.badges.length >= 5, JSON.stringify(badges.data).slice(0, 140));
   check('badges have earned flags', badges.data.badges.every((b) => typeof b.earned === 'boolean'));
-  const pet = await req('GET', '/analytics/pet', { token: rijalToken });
-  check('savings pet state', pet.status === 200 && ['sleepy', 'neutral', 'happy', 'ecstatic'].includes(pet.data.mood));
 
   console.log('\n== Meal planner ==');
   const meals = await req('GET', '/meals', { token: rijalToken });

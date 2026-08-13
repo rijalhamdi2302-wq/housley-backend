@@ -409,38 +409,6 @@ router.get(
   })
 );
 
-/** GET /api/analytics/pet — the savings pet's current mood (#28). */
-router.get(
-  '/pet',
-  ah(async (req, res) => {
-    const family = await getFamily();
-    const period = await getActivePeriod(family._id);
-    if (!period) return res.json({ mood: 'sleepy', level: 0 });
-    const { getGroceryBalance, getPersonalBalance } = require('./helpers');
-    const { User, SavingsGoal } = require('../models');
-    const gb = await getGroceryBalance(family._id, period._id);
-    const users = await User.find({ familyId: family._id }).select('_id').lean();
-    let fundedTotal = gb.funded;
-    let spentTotal = gb.spent;
-    for (const u of users) {
-      const pb = await getPersonalBalance(u._id, period._id);
-      fundedTotal += pb.funded;
-      spentTotal += pb.spent;
-    }
-    const goals = await SavingsGoal.find({ familyId: family._id }).lean();
-    const goalPct = goals.length
-      ? goals.reduce((s, g) => s + Math.min(100, (g.currentAmount / Math.max(1, g.targetAmount)) * 100), 0) / goals.length
-      : 0;
-    const saved = Math.max(0, fundedTotal - spentTotal);
-    const ratio = fundedTotal > 0 ? saved / fundedTotal : 0;
-    let score = Math.round(goalPct * 0.5 + ratio * 50 + Math.min(20, saved / 100000)); // 0..~100
-    const mood =
-      score >= 70 ? 'ecstatic' : score >= 45 ? 'happy' : score >= 20 ? 'neutral' : 'sleepy';
-    const level = Math.min(5, Math.floor(score / 20) + 1);
-    res.json({ mood, level, score, saved, goalPct, ratio });
-  })
-);
-
 /** GET /api/analytics/personal/:userId/category — self or provider only. */
 router.get(
   '/personal/:userId/category',
