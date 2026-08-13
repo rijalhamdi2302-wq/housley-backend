@@ -1,3 +1,3 @@
-◇ injected env (3) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+◇ injected env (3) from .env // tip: ⌘ suppress logs { quiet: true }
 ✓ Connected to MongoDB
 ✓ Housely backend running on http://localhost:4000

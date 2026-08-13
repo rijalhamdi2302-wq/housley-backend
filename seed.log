@@ -1,4 +1,4 @@
-◇ injected env (3) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+◇ injected env (3) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
 ✓ Connected to MongoDB
 ⚠ Wiped all existing collections.
   ✓ Asyraf Bin Md Rusli (provider) — no PIN yet

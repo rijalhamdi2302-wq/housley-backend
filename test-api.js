@@ -123,7 +123,9 @@ async function main() {
   const fundOther = await req('POST', '/funding/personal', { token: rijalToken, body: { userId: sister1._id, amount: 5000, paymentMethod: 'cash' } });
   check('member cannot fund other people', fundOther.status === 403);
   const fundNoProof = await req('POST', '/funding/personal', { token: rijalToken, body: { amount: 5000, paymentMethod: 'online_banking' } });
-  check('online banking requires proof image', fundNoProof.status === 400);
+  check('online banking works without proof (optional)', fundNoProof.status === 201);
+  const fundBadProof = await req('POST', '/funding/personal', { token: rijalToken, body: { amount: 5000, paymentMethod: 'online_banking', proofImage: 'not-an-image' } });
+  check('invalid proof image rejected', fundBadProof.status === 400);
   const fundProof = await req('POST', '/funding/personal', {
     token: rijalToken,
     body: { amount: 5000, paymentMethod: 'online_banking', proofImage: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==' },
@@ -145,6 +147,13 @@ async function main() {
   check('normal expenses ok', g3.status === 201 && g4.status === 201);
   const gBig = await req('POST', '/expenses/groceries', { token: rijalToken, body: { shopName: 'Big Mall', amount: 90000, paymentMethod: 'cash', category: 'Groceries' } });
   check('unusual spend flagged (>2.5x avg)', gBig.status === 201 && gBig.data.flags.includes('unusual'), JSON.stringify(gBig.data.flags));
+  const gReceipt = await req('POST', '/expenses/groceries', {
+    token: rijalToken,
+    body: { shopName: 'Econsave', amount: 5500, paymentMethod: 'cash', category: 'Groceries', receiptImage: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==' },
+  });
+  check('groceries expense stores optional receipt image', gReceipt.status === 201 && gReceipt.data.expense.receiptImage, JSON.stringify(gReceipt.data).slice(0, 120));
+  const gBadReceipt = await req('POST', '/expenses/groceries', { token: rijalToken, body: { shopName: 'Econsave', amount: 6000, paymentMethod: 'cash', category: 'Groceries', receiptImage: 'nope' } });
+  check('invalid receipt image rejected', gBadReceipt.status === 400);
 
   console.log('\n== Line items → catalog sync ==');
   const gItems = await req('POST', '/expenses/groceries', {
@@ -424,14 +433,31 @@ async function main() {
   // the relogin rotated the refresh token — grab the fresh one
   const freshRefresh = relogin.data.refreshToken;
   await req('POST', '/auth/change-pin', { token: relogin.data.token, body: { currentPin: '7777', newPin: '2302' } });
+  const refreshNoBio = await req('POST', '/auth/refresh', { body: { userId: rijal._id, refreshToken: freshRefresh } });
+  check('refresh rejected until biometric enabled', refreshNoBio.status === 403);
+  const bioOn = await req('POST', '/auth/biometric', { token: relogin.data.token, body: { enabled: true } });
+  check('biometric toggle on', bioOn.status === 200 && bioOn.data.user.biometricEnabled === true);
   const refreshOk = await req('POST', '/auth/refresh', { body: { userId: rijal._id, refreshToken: freshRefresh } });
-  check('refresh token issues new session', refreshOk.status === 200 && refreshOk.data.token);
+  check('refresh token issues new session (biometric enabled)', refreshOk.status === 200 && refreshOk.data.token);
   const refreshReuse = await req('POST', '/auth/refresh', { body: { userId: rijal._id, refreshToken: freshRefresh } });
   check('refresh token rotates (reuse rejected)', refreshReuse.status === 401);
   const logout = await req('POST', '/auth/logout', { token: refreshOk.data.token });
   check('logout ok', logout.status === 200);
   const refreshAfterLogout = await req('POST', '/auth/refresh', { body: { userId: rijal._id, refreshToken: refreshOk.data.refreshToken } });
   check('refresh after logout rejected', refreshAfterLogout.status === 401);
+
+  console.log('\n== Profile photos ==');
+  const photoData = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const setOwnPhoto = await req('PATCH', '/auth/photo', { token: rijalToken, body: { avatarPhoto: photoData } });
+  check('member sets own photo', setOwnPhoto.status === 200 && setOwnPhoto.data.user.avatarPhoto === photoData);
+  const setOtherPhoto = await req('PATCH', '/auth/photo', { token: rijalToken, body: { userId: sister1._id, avatarPhoto: photoData } });
+  check('member cannot change another person’s photo', setOtherPhoto.status === 403);
+  const setSisPhoto = await req('PATCH', '/auth/photo', { token: dadToken, body: { userId: sister1._id, avatarPhoto: photoData } });
+  check('provider changes another person’s photo', setSisPhoto.status === 200 && setSisPhoto.data.user.avatarPhoto === photoData);
+  const badPhoto = await req('PATCH', '/auth/photo', { token: rijalToken, body: { avatarPhoto: 'not-an-image' } });
+  check('invalid photo rejected', badPhoto.status === 400);
+  const rmOwnPhoto = await req('PATCH', '/auth/photo', { token: rijalToken, body: { avatarPhoto: null } });
+  check('photo can be removed', rmOwnPhoto.status === 200 && rmOwnPhoto.data.user.avatarPhoto === null);
 
   console.log('\n== Period close & rollover (provider) ==');
   const statusBefore = await req('GET', '/periods/status', { token: dadToken });
@@ -459,6 +485,17 @@ async function main() {
   check('invalid token rejected', badToken.status === 401);
   const wrongUser = await req('POST', '/expenses/personal', { token: dadToken, body: { userId: rijal._id, amount: 100, category: 'x' } });
   check('personal expense userId is ignored (self only enforced)', wrongUser.status === 201 && String(wrongUser.data.expense.userId) === String(dad._id));
+
+  console.log('\n== Factory reset (wipes everything — must run last) ==');
+  const resetWrong = await req('POST', '/auth/factory-reset', { body: { pin: '0000' } });
+  check('factory reset rejects wrong PIN', resetWrong.status === 403);
+  const resetOk = await req('POST', '/auth/factory-reset', { body: { pin: '0259' } });
+  check('factory reset wipes everything', resetOk.status === 200 && resetOk.data.ok === true, JSON.stringify(resetOk.data).slice(0, 140));
+  const profilesAfter = await req('GET', '/auth/profiles');
+  check('members still exist after reset', profilesAfter.status === 200 && profilesAfter.data.users.length === 5);
+  check('all PINs cleared after reset', profilesAfter.data.users.every((u) => u.hasPin === false));
+  const balAfter = await req('GET', '/funding/balances/groceries', { token: dadToken });
+  check('balances zeroed after reset', balAfter.status === 200 && balAfter.data.balance.currentBalance === 0 && balAfter.data.balance.spent === 0);
 
   console.log('\n========================================');
   console.log(`RESULT: ${passed} passed, ${failed} failed`);

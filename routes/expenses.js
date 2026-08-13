@@ -25,6 +25,18 @@ router.use(requireAuth);
 
 const PAYMENT_METHODS = ['online_banking', 'cash', 'credit_card', 'e_wallet'];
 const MAX_LINE_ITEMS = 100;
+const MAX_IMAGE_URL = 6 * 1024 * 1024; // ~4.5 MB decoded
+
+/** Validate an optional receipt/proof image: must be a small base64 data URL. */
+function validateImage(image) {
+  if (image === undefined || image === null || image === '') return null;
+  if (typeof image !== 'string' || !image.startsWith('data:image/') || image.length > MAX_IMAGE_URL) {
+    const err = new Error('If attaching a receipt image it must be a data URL under ~4.5 MB.');
+    err.status = 400;
+    throw err;
+  }
+  return image;
+}
 
 // ---------------------------------------------------------------------------
 // POST /api/expenses/groceries — log a Groceries expense (provider/spender/member)
@@ -32,7 +44,7 @@ const MAX_LINE_ITEMS = 100;
 router.post(
   '/groceries',
   ah(async (req, res) => {
-    const { shopId, shopName, category, amount, paymentMethod, note, lineItems, imported } = req.body || {};
+    const { shopId, shopName, category, amount, paymentMethod, note, receiptImage, lineItems, imported } = req.body || {};
     if (!isValidMoney(amount)) return res.status(400).json({ error: 'A valid amount is required.' });
     if (!canSpendGroceries(req.user.role)) {
       return res.status(403).json({ error: 'Dependents cannot spend from the Groceries pool.' });
@@ -40,6 +52,7 @@ router.post(
     if (paymentMethod && !PAYMENT_METHODS.includes(paymentMethod)) {
       return res.status(400).json({ error: 'Invalid payment method.' });
     }
+    const receipt = validateImage(receiptImage);
 
     const family = await getFamily();
     const period = await getActivePeriod(family._id);
@@ -120,6 +133,7 @@ router.post(
       amount,
       paymentMethod: paymentMethod || 'cash',
       note: String(note || '').slice(0, 500),
+      receiptImage: receipt,
       lineItems: items,
       flags,
       imported: Boolean(imported),
@@ -152,11 +166,12 @@ router.post(
 router.post(
   '/personal',
   ah(async (req, res) => {
-    const { shopName, category, amount, paymentMethod, note } = req.body || {};
+    const { shopName, category, amount, paymentMethod, note, receiptImage } = req.body || {};
     if (!isValidMoney(amount)) return res.status(400).json({ error: 'A valid amount is required.' });
     if (paymentMethod && !PAYMENT_METHODS.includes(paymentMethod)) {
       return res.status(400).json({ error: 'Invalid payment method.' });
     }
+    const receipt = validateImage(receiptImage);
 
     const family = await getFamily();
     const period = await getActivePeriod(family._id);
@@ -174,6 +189,7 @@ router.post(
       amount,
       paymentMethod: paymentMethod || 'cash',
       note: String(note || '').slice(0, 500),
+      receiptImage: receipt,
       lineItems: [],
       flags: [],
     });

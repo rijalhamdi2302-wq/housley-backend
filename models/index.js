@@ -43,6 +43,7 @@ const userSchema = new mongoose.Schema(
     pinHash: { type: String, default: null, select: false },
     biometricEnabled: { type: Boolean, default: false },
     avatarColor: { type: String, default: '#ff6f91' },
+    avatarPhoto: { type: String, default: null }, // small base64 data URL — the member's own photo
     // PIN lockout fields
     failedAttempts: { type: Number, default: 0, min: 0 },
     lockedUntil: { type: Date, default: null },
@@ -58,6 +59,7 @@ userSchema.methods.toSafeJSON = function () {
     name: this.name,
     role: this.role,
     avatarColor: this.avatarColor,
+    avatarPhoto: this.avatarPhoto || null,
     hasPin: Boolean(this.pinHash),
     biometricEnabled: Boolean(this.biometricEnabled),
   };
@@ -169,6 +171,7 @@ const expenseTransactionSchema = new mongoose.Schema(
       default: 'cash',
     },
     note: { type: String, trim: true, maxlength: 500, default: '' },
+    receiptImage: { type: String, default: null }, // optional base64 data URL — proof of the purchase
     lineItems: { type: [lineItemSchema], default: [] },
     flags: {
       type: [String],

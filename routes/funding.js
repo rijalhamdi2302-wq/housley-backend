@@ -26,21 +26,24 @@ router.use(requireAuth);
 
 const PAYMENT_METHODS = ['online_banking', 'cash', 'credit_card', 'e_wallet'];
 
-/** Validate proof image: must be a small base64 data URL (only when online_banking). */
+/**
+ * Validate an optional proof image for online banking funding.
+ * Proof is never required — but if one is provided it must be a small
+ * base64 data URL. Images for non-banking methods are never stored.
+ */
 function validateProofImage(method, proofImage) {
-  if (method === 'online_banking') {
-    if (
-      typeof proofImage !== 'string' ||
-      !proofImage.startsWith('data:image/') ||
-      proofImage.length > 6 * 1024 * 1024 // ~4.5 MB decoded
-    ) {
-      const err = new Error('A proof image (data URL, under ~4.5 MB) is required for online banking funding.');
-      err.status = 400;
-      throw err;
-    }
-    return proofImage;
+  if (method !== 'online_banking') return null;
+  if (proofImage === undefined || proofImage === null || proofImage === '') return null;
+  if (
+    typeof proofImage !== 'string' ||
+    !proofImage.startsWith('data:image/') ||
+    proofImage.length > 6 * 1024 * 1024 // ~4.5 MB decoded
+  ) {
+    const err = new Error('If attaching a proof image it must be a data URL under ~4.5 MB.');
+    err.status = 400;
+    throw err;
   }
-  return null; // never store images for non-banking methods
+  return proofImage;
 }
 
 /** POST /api/funding/groceries — fund the shared Groceries pool. */

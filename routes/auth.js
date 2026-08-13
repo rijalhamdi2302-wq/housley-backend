@@ -8,7 +8,7 @@ const bcrypt = require('bcryptjs');
 const rateLimit = require('express-rate-limit');
 const { User } = require('../models');
 const { requireAuth, requireRole, signToken, normalizePin } = require('../middleware/auth');
-const { ah, sha256, randomToken, logActivity } = require('./helpers');
+const { ah, sha256, randomToken, logActivity, canFundAnyone } = require('./helpers');
 
 const router = express.Router();
 
@@ -22,6 +22,18 @@ const pinLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many attempts from this device. Please try again in a few minutes.' },
+});
+
+// Master factory-reset PIN. Change it in backend/.env (FACTORY_RESET_PIN) if you
+// want something different from the family default 0259.
+const FACTORY_RESET_PIN = String(process.env.FACTORY_RESET_PIN || '0259').trim();
+
+const resetLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many factory-reset attempts. Try again later.' },
 });
 
 /** GET /api/auth/profiles — list all family profiles (no PIN hashes). */
@@ -142,6 +154,10 @@ router.post(
     if (!user || !user.refreshTokenHash) {
       return res.status(401).json({ error: 'Session not found. Please log in with your PIN.' });
     }
+    // Only profiles that explicitly enabled biometric unlock may use this path.
+    if (!user.biometricEnabled) {
+      return res.status(403).json({ error: 'Biometric unlock is not enabled for this profile.' });
+    }
     if (user.refreshTokenHash !== sha256(refreshToken)) {
       return res.status(401).json({ error: 'Session is invalid. Please log in with your PIN.' });
     }
@@ -237,6 +253,129 @@ router.post(
     req.user.refreshTokenHash = null;
     await req.user.save();
     res.json({ ok: true });
+  })
+);
+
+/**
+ * PATCH /api/auth/photo — set a member's profile photo (small data URL).
+ * Anyone can set their own photo; provider/grocery_spender can set anyone's.
+ */
+router.patch(
+  '/photo',
+  requireAuth,
+  ah(async (req, res) => {
+    const { userId, avatarPhoto } = req.body || {};
+    const targetId = userId ? String(userId) : String(req.user._id);
+    const isSelf = targetId === String(req.user._id);
+    if (!isSelf && !canFundAnyone(req.user.role)) {
+      return res.status(403).json({ error: 'Only the provider and grocery spender can change other people’s photos.' });
+    }
+
+    const target = await User.findById(targetId);
+    if (!target) return res.status(404).json({ error: 'User not found.' });
+
+    // null / empty string clears the photo; anything else must be a small data URL
+    if (avatarPhoto === null || avatarPhoto === '') {
+      target.avatarPhoto = null;
+      await target.save();
+      return res.json({ user: target.toSafeJSON() });
+    }
+    if (avatarPhoto === undefined) {
+      return res.status(400).json({ error: 'avatarPhoto is required.' });
+    }
+    if (
+      typeof avatarPhoto !== 'string' ||
+      !avatarPhoto.startsWith('data:image/') ||
+      avatarPhoto.length > 1024 * 1024 // ~750 KB decoded — avatars are small
+    ) {
+      return res.status(400).json({ error: 'Photo must be a data URL under ~750 KB. Pick a smaller picture.' });
+    }
+
+    target.avatarPhoto = avatarPhoto;
+    await target.save();
+    res.json({ user: target.toSafeJSON() });
+  })
+);
+
+/**
+ * POST /api/auth/factory-reset — wipe the whole family back to brand-new.
+ * Requires the master reset PIN (default 0259, override via FACTORY_RESET_PIN).
+ * Everything is deleted: money records, shops, catalog, checklist, budgets,
+ * bills, goals, activity — and every member's PIN (so everyone sets a fresh
+ * one on first open). Members, roles and default categories are kept.
+ */
+router.post(
+  '/factory-reset',
+  resetLimiter,
+  ah(async (req, res) => {
+    const { pin } = req.body || {};
+    if (String(pin || '').trim() !== FACTORY_RESET_PIN) {
+      return res.status(403).json({ error: 'That reset PIN is not correct.' });
+    }
+
+    const models = require('../models');
+    const { Family, TrackingPeriod, GroceryBalance, PersonalBalance, Category } = models;
+
+    const family = await Family.findOne().sort({ createdAt: 1 });
+    if (!family) return res.status(409).json({ error: 'No family found to reset.' });
+
+    // --- wipe every piece of data (keep Family + User documents) ---
+    const wipe = [
+      models.FundingTransaction,
+      models.ExpenseTransaction,
+      models.Shop,
+      models.ActivityLog,
+      models.GroceryChecklistItem,
+      models.GroceryCatalogItem,
+      models.CategoryBudget,
+      models.RecurringBill,
+      models.SavingsGoal,
+      TrackingPeriod,
+      GroceryBalance,
+      PersonalBalance,
+    ];
+    for (const M of wipe) await M.deleteMany({});
+    await Category.deleteMany({ familyId: family._id });
+
+    // --- reset every member to brand-new (no PIN, no biometric, no photo) ---
+    await User.updateMany(
+      {},
+      {
+        $set: {
+          pinHash: null,
+          refreshTokenHash: null,
+          biometricEnabled: false,
+          avatarPhoto: null,
+          failedAttempts: 0,
+          lockedUntil: null,
+        },
+      }
+    );
+
+    // --- fresh tracking period + zero balances + default categories ---
+    const now = new Date();
+    const period = await TrackingPeriod.create({
+      familyId: family._id,
+      startDate: new Date(now.getFullYear(), now.getMonth(), 1),
+      endDate: new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999),
+      status: 'active',
+    });
+    await GroceryBalance.create({ familyId: family._id, periodId: period._id, funded: 0, spent: 0, budgetAmount: 0 });
+    const users = await User.find({ familyId: family._id });
+    for (const u of users) {
+      await PersonalBalance.create({ userId: u._id, periodId: period._id, funded: 0, spent: 0, fundedBy: [] });
+    }
+    const DEFAULT_CATEGORIES = [
+      'Groceries', 'Meat & Fish', 'Vegetables & Fruits', 'Dairy & Eggs', 'Petrol',
+      'Restaurant & Eat Out', 'Pharmacy & Health', 'Utility Bills', 'Transport',
+      'Education', 'Entertainment', 'Household', 'Personal Care', 'Other',
+    ];
+    await Category.insertMany(DEFAULT_CATEGORIES.map((name) => ({ familyId: family._id, name })));
+
+    res.json({
+      ok: true,
+      message: 'Housely has been reset to brand-new. Every member starts fresh with a new PIN.',
+    });
   })
 );
 
