@@ -625,6 +625,51 @@ async function main() {
   const wrongUser = await req('POST', '/expenses/personal', { token: dadToken, body: { userId: rijal._id, amount: 100, category: 'x' } });
   check('personal expense userId is ignored (self only enforced)', wrongUser.status === 201 && String(wrongUser.data.expense.userId) === String(dad._id));
 
+  console.log('\n== AI (v2.2) — validation, gating, live calls ==');
+  const aiNoAuth = await req('POST', '/ai/shopping-list', { body: { prompt: 'milk' } });
+  check('AI routes are protected', aiNoAuth.status === 401);
+  const aiShort = await req('POST', '/ai/parse-receipt-text', { token: rijalToken, body: { text: 'hi' } });
+  check('parse-receipt-text rejects tiny text', aiShort.status === 400);
+  const aiBadImg = await req('POST', '/ai/scan-receipt', { token: rijalToken, body: { image: 'not-an-image' } });
+  check('scan-receipt rejects non-image input', aiBadImg.status === 400);
+  const aiEmpty = await req('POST', '/ai/shopping-list', { token: rijalToken, body: { prompt: '  ' } });
+  check('shopping-list rejects empty prompt', aiEmpty.status === 400);
+  // family-wide AI switch gating (provider toggles it)
+  const aiOff = await req('PATCH', '/family', { token: dadToken, body: { aiEnabled: false } });
+  check('provider turns AI off', aiOff.status === 200 && aiOff.data.family.aiEnabled === false);
+  const aiGated = await req('POST', '/ai/shopping-list', { token: rijalToken, body: { prompt: 'milk' } });
+  check('AI calls refused while family AI is off', aiGated.status === 403);
+  const aiOn = await req('PATCH', '/family', { token: dadToken, body: { aiEnabled: true } });
+  check('provider turns AI back on', aiOn.status === 200 && aiOn.data.family.aiEnabled === true);
+  const famAI = await req('GET', '/family', { token: rijalToken });
+  check('family settings expose aiEnabled', famAI.status === 200 && famAI.data.family.aiEnabled === true);
+
+  // Live calls against the real Groq key. Upstream hiccups (quota/timeout/network)
+  // are external, not app bugs — those get reported as "skipped" instead of failed.
+  const aiUpstreamOk = (r) => r.status === 200;
+  const aiSkipped = (r) => r.status === 502 || r.status === 504 || r.status === 429 || r.status === -1;
+  const aiTry = async (body) => {
+    try {
+      return await req('POST', '/ai/parse-receipt-text', { token: rijalToken, body });
+    } catch {
+      return { status: -1 };
+    }
+  };
+  const aiParse = await aiTry({ text: 'ECONSAVE SUPERMARKET\nMilo 3-in-1 2 9.90\nBeras 5kg 1 28.50\nTOTAL 38.40' });
+  check('AI parses OCR text into receipt JSON', aiUpstreamOk(aiParse) && aiParse.data.shop && aiParse.data.items.length >= 2, aiSkipped(aiParse) ? '(skipped — AI upstream unavailable)' : JSON.stringify(aiParse.data).slice(0, 160));
+  const aiListRes = await (async () => {
+    try { return await req('POST', '/ai/shopping-list', { token: rijalToken, body: { prompt: 'breakfast for 4' } }); } catch { return { status: -1 }; }
+  })();
+  check('AI generates a shopping list', aiUpstreamOk(aiListRes) && Array.isArray(aiListRes.data.items) && aiListRes.data.items.length > 0, aiSkipped(aiListRes) ? '(skipped — AI upstream unavailable)' : JSON.stringify(aiListRes.data).slice(0, 160));
+  const aiMealRes = await (async () => {
+    try { return await req('POST', '/ai/meal-plan', { token: rijalToken, body: { prompt: 'simple dinners', days: 2 } }); } catch { return { status: -1 }; }
+  })();
+  check('AI plans meals', aiUpstreamOk(aiMealRes) && Array.isArray(aiMealRes.data.meals) && aiMealRes.data.meals.length >= 1, aiSkipped(aiMealRes) ? '(skipped — AI upstream unavailable)' : JSON.stringify(aiMealRes.data).slice(0, 160));
+  const aiInsRes = await (async () => {
+    try { return await req('POST', '/ai/insights', { token: rijalToken, body: {} }); } catch { return { status: -1 }; }
+  })();
+  check('AI explains real spending data', aiUpstreamOk(aiInsRes) && Array.isArray(aiInsRes.data.insights) && aiInsRes.data.insights.length > 0, aiSkipped(aiInsRes) ? '(skipped — AI upstream unavailable)' : JSON.stringify(aiInsRes.data).slice(0, 160));
+
   console.log('\n== Factory reset (wipes everything — must run last) ==');
   const resetWrong = await req('POST', '/auth/factory-reset', { body: { pin: '0000' } });
   check('factory reset rejects wrong PIN', resetWrong.status === 403);

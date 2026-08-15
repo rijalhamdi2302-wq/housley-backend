@@ -64,6 +64,7 @@ router.get(
         periodType: family.periodType,
         rolloverPolicy: family.rolloverPolicy,
         currency: family.currency,
+        aiEnabled: family.aiEnabled !== false,
       },
     });
   })
@@ -77,7 +78,7 @@ router.patch(
       return res.status(403).json({ error: 'Only the provider can change family settings.' });
     }
     const family = await Family.findOne().sort({ createdAt: 1 });
-    const { name, periodType, rolloverPolicy } = req.body || {};
+    const { name, periodType, rolloverPolicy, aiEnabled } = req.body || {};
 
     if (name !== undefined) {
       const clean = String(name || '').trim();
@@ -133,6 +134,9 @@ router.patch(
       }
       family.rolloverPolicy = rolloverPolicy;
     }
+    if (aiEnabled !== undefined) {
+      family.aiEnabled = Boolean(aiEnabled);
+    }
 
     await family.save();
     res.json({
@@ -141,6 +145,7 @@ router.patch(
         periodType: family.periodType,
         rolloverPolicy: family.rolloverPolicy,
         currency: family.currency,
+        aiEnabled: family.aiEnabled !== false,
       },
       periodRebuilt: family._periodRebuilt || null,
     });

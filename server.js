@@ -83,6 +83,7 @@ const routes = {
   chores: require('./routes/chores'),
   social: require('./routes/social'),
   family: require('./routes/family'),
+  ai: require('./routes/ai'),
 };
 
 app.get('/api/health', (req, res) => res.json({ ok: true, service: 'housely-backend' }));
@@ -104,6 +105,7 @@ app.use('/api/meals', routes.meals);
 app.use('/api/chores', routes.chores);
 app.use('/api/social', routes.social);
 app.use('/api/family', routes.family);
+app.use('/api/ai', routes.ai);
 
 // --- Errors -------------------------------------------------------------------
 app.use((req, res) => res.status(404).json({ error: 'Not found.' }));

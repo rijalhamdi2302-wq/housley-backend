@@ -23,6 +23,8 @@ const familySchema = new mongoose.Schema(
     periodType: { type: String, enum: ['monthly', 'weekly', 'annually'], default: 'monthly' },
     rolloverPolicy: { type: String, enum: ['carry_forward', 'reset'], default: 'carry_forward' },
     currency: { type: String, default: 'RM' },
+    // v2.2 — family-wide AI switch (provider toggles it in Settings)
+    aiEnabled: { type: Boolean, default: true },
   },
   { timestamps: true }
 );
