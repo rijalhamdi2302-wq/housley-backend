@@ -178,6 +178,11 @@ const expenseTransactionSchema = new mongoose.Schema(
     note: { type: String, trim: true, maxlength: 500, default: '' },
     receiptImage: { type: String, default: null }, // optional base64 data URL — proof of the purchase
     lineItems: { type: [lineItemSchema], default: [] },
+    // v3 — discount / tax (sen): the receipt's price adjustments. The stored
+    // `amount` is the final paid total; these are kept as metadata so reports
+    // can show "subtotal − discount + tax".
+    discount: { type: Number, default: 0, min: 0 },
+    tax: { type: Number, default: 0, min: 0 },
     flags: {
       type: [String],
       default: [],

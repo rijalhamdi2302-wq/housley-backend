@@ -31,6 +31,73 @@ function nextPeriodDates(periodType, startDate) {
 }
 
 /**
+ * POST /api/family/delete-data — provider deletes ALL expense + funding
+ * records inside a date range (v3 family request: "delete certain time like
+ * month or week of data"). After deletion the active period's balances are
+ * recomputed from the records that remain, so nothing drifts.
+ *
+ * Body: { from: "YYYY-MM-DD", to: "YYYY-MM-DD" }
+ */
+router.post(
+  '/delete-data',
+  ah(async (req, res) => {
+    if (req.user.role !== 'provider') {
+      return res.status(403).json({ error: 'Only the provider can delete family records.' });
+    }
+    const { from, to } = req.body || {};
+    if (!from || !to) return res.status(400).json({ error: 'Pick a date range to delete.' });
+    const fromD = new Date(from);
+    const toD = new Date(new Date(to).getTime() + 86399999); // inclusive end of day
+    if (Number.isNaN(fromD.getTime()) || Number.isNaN(toD.getTime()) || toD < fromD) {
+      return res.status(400).json({ error: 'Invalid date range.' });
+    }
+    const { ExpenseTransaction, FundingTransaction, User, GroceryBalance, PersonalBalance } = require('../models');
+    const family = await getFamily();
+    const range = { createdAt: { $gte: fromD, $lte: toD } };
+
+    const delExpenses = await ExpenseTransaction.deleteMany({ familyId: family._id, ...range });
+    const delFunding = await FundingTransaction.deleteMany({ familyId: family._id, ...range });
+
+    // ---- Recompute the active period's balances from what remains ----------------
+    const period = await getActivePeriod(family._id);
+    let gb = null;
+    let personalRecount = 0;
+    if (period) {
+      const remainingExpenses = await ExpenseTransaction.find({ familyId: family._id, periodId: period._id }).lean();
+      const remainingFunding = await FundingTransaction.find({ familyId: family._id, periodId: period._id }).lean();
+      const gSpent = remainingExpenses.filter((e) => e.type === 'groceries').reduce((s, e) => s + e.amount, 0);
+      const gFunded = remainingFunding.filter((f) => f.type === 'groceries').reduce((s, f) => s + f.amount, 0);
+      gb = await getGroceryBalance(family._id, period._id);
+      if (gb) {
+        gb.spent = gSpent;
+        gb.funded = gFunded;
+        await gb.save();
+      }
+      const users = await User.find({ familyId: family._id }).select('_id');
+      for (const u of users) {
+        const pb = await getPersonalBalance(u._id, period._id);
+        if (!pb) continue;
+        const spent = remainingExpenses.filter((e) => e.type === 'personal' && String(e.userId) === String(u._id)).reduce((s, e) => s + e.amount, 0);
+        const funded = remainingFunding.filter((f) => f.type === 'personal' && String(f.userId) === String(u._id)).reduce((s, f) => s + f.amount, 0);
+        pb.spent = spent;
+        pb.funded = funded;
+        pb.fundedBy = remainingFunding
+          .filter((f) => f.type === 'personal' && String(f.userId) === String(u._id))
+          .map((f) => ({ userId: f.fundedById, amount: f.amount, at: f.createdAt }));
+        await pb.save();
+        personalRecount += 1;
+      }
+    }
+
+    res.json({
+      ok: true,
+      deleted: { expenses: delExpenses.deletedCount, funding: delFunding.deletedCount },
+      balancesRebuilt: personalRecount > 0 || Boolean(gb),
+    });
+  })
+);
+
+/**
  * PATCH /api/family/limits/:userId — provider sets a member's per-trip
  * Groceries spending limit (feature #23). 0 clears it (unlimited).
  */

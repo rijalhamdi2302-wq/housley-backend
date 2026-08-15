@@ -32,6 +32,7 @@ router.get(
       familyId: family._id,
     };
     if (req.query.type === 'groceries' || req.query.type === 'personal') q.type = req.query.type;
+    if (req.query.cat) q.category = String(req.query.cat).trim().slice(0, 60); // v3 — e.g. ?cat=Petrol
     if (req.query.from) q.createdAt = { ...(q.createdAt || {}), $gte: new Date(req.query.from) };
     if (req.query.to) q.createdAt = { ...(q.createdAt || {}), $lte: new Date(new Date(req.query.to).getTime() + 86399999) };
     const search = String(req.query.search || '').trim();

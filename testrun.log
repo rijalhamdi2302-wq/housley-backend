@@ -1,0 +1,343 @@
+
+== Health ==
+  ✓ health returns ok
+
+== Profiles (no auth) ==
+  ✓ profiles status 200
+  ✓ five family members
+  ✓ no pinHash leaked
+  ✓ Rijal is member role
+  ✓ Dad is provider
+  ✓ Mom is grocery_spender
+  ✓ sisters are dependents
+  ✓ Rijal has a PIN set (2302)
+  ✓ others have no PIN yet
+
+== Auth protection ==
+  ✓ protected route rejects anonymous
+
+== PIN verify (Rijal 2302) ==
+  ✓ wrong PIN rejected
+  ✓ wrong PIN reports attempts left
+  ✓ non-numeric PIN rejected
+  ✓ correct PIN logs in (2302)
+  ✓ login returns safe user
+
+== Lockout ==
+  ✓ set-pin works for new profile
+  ✓ set-pin refused when PIN exists
+  ✓ 5 wrong attempts lock the profile
+  ✓ correct PIN refused while locked
+
+== Categories (auto-seed) ==
+  ✓ categories seeded on first call
+  ✓ add category
+  ✓ duplicate category refused
+
+== Permissions: Rijal (member) ==
+  ✓ member cannot fund Groceries
+  ✓ member cannot set Groceries budget
+  ✓ member cannot set category budget
+  ✓ member cannot close period
+
+== Funding personal (self) ==
+  ✓ member funds own personal balance
+  ✓ personal balance funded 50.00
+  ✓ member cannot fund other people
+  ✓ online banking works without proof (optional)
+  ✓ invalid proof image rejected
+  ✓ online banking with proof accepted
+
+== Personal expense (self only) ==
+  ✓ personal expense logged
+  ✓ personal balance spent updated
+
+== Groceries expense (member allowed) ==
+  ✓ member logs groceries expense
+  ✓ duplicate (same shop/amount/day) flagged
+  ✓ normal expenses ok
+  ✓ unusual spend flagged (>2.5x avg)
+  ✓ groceries expense stores optional receipt image
+  ✓ invalid receipt image rejected
+
+== Line items → catalog sync ==
+  ✓ expense with line items saved
+  ✓ catalog auto-created items
+  ✓ catalog item category learned
+  ✓ catalog sync is case-insensitive & bumps count
+  ✓ catalog favorites endpoint
+
+== Shops ==
+  ✓ shops listed
+  ✓ favorite shops by usage
+  ✓ cheapest shop suggestion
+  ✓ create shop directly
+
+== Provider actions (set Dad PIN then login) ==
+  ✓ set Dad PIN
+  ✓ provider funds Groceries
+  ✓ grocery balance funded 2000.00
+  ✓ provider sets Groceries budget
+  ✓ safe-to-spend computed
+  ✓ provider sets category budget
+  ✓ provider funds a dependent
+  ✓ provider sees all 5 personal balances
+  ✓ provider sees everyone’s funding records
+
+== Mom (grocery_spender) ==
+  ✓ set Mom PIN
+  ✓ grocery_spender funds Groceries
+  ✓ grocery_spender can view others’ personal analytics
+  ✓ grocery_spender sees all 5 personal balances
+  ✓ grocery_spender resets dependent PIN
+  ✓ grocery_spender cannot reset provider PIN
+  ✓ member cannot reset anyone PIN
+
+== Checklist ==
+  ✓ checklist empty initially
+  ✓ add checklist item
+  ✓ toggle checklist item
+  ✓ suggested-from-catalog section shows low items
+  ✓ bought-it removes checklist item
+  ✓ delete checklist item
+
+== Catalog management ==
+  ✓ manual catalog add
+  ✓ catalog status update
+  ✓ catalog delete
+
+== Transactions: history, edit, delete ==
+  ✓ expense history listed
+  ✓ search by shop works
+  ✓ filter by type works
+  ✓ edit expense amount (1200 → 2200)
+  ✓ balance adjusted by delta (+1000 sen)
+  ✓ delete expense restores balance
+  ✓ balance restored after delete
+  ✓ funding history listed (member sees own only)
+  ✓ member funding list hides other people’s records
+  ✓ delete funding record
+  ✓ funding delete reduces funded balance
+  ✓ member cannot edit another member’s expense
+  ✓ provider can edit any expense
+
+== Analytics ==
+  ✓ weekly recap
+  ✓ groceries by store
+  ✓ groceries by month (6 buckets)
+  ✓ groceries by period
+  ✓ personal category pie
+  ✓ cannot view other personal analytics
+  ✓ family categories
+  ✓ family summary
+  ✓ member summary shows ONLY their own balance
+  ✓ category budgets list
+
+== Analytics (new views) ==
+  ✓ trend bucket daily
+  ✓ trend bucket weekly
+  ✓ trend bucket monthly
+  ✓ trend bucket yearly
+  ✓ trend falls back on bad bucket
+  ✓ weekday pattern has 7 days
+  ✓ member comparison lists spenders
+  ✓ top expenses sorted desc
+  ✓ top expenses resolve spender names
+  ✓ top shops listed
+
+== Analytics v2 (payment method, streak, badges) ==
+  ✓ payment-method breakdown
+  ✓ payment-method sums match spend
+  ✓ streak endpoint returns days array
+  ✓ streak is a number
+  ✓ badges list computed
+  ✓ badges have earned flags
+
+== Meal planner ==
+  ✓ meals listed
+  ✓ add meal plan
+  ✓ generate shopping list from meals
+  ✓ ingredients added to shopping list
+  ✓ duplicate ingredient not re-added
+  ✓ delete meal plan
+
+== Chores (chore-to-allowance) ==
+  ✓ chores listed
+  ✓ member cannot create chores
+  ✓ provider creates chore
+  ✓ sister login prepared for chore test
+  ✓ non-assignee cannot mark done
+  ✓ assignee marks chore done
+  ✓ member cannot approve chores
+  ✓ provider approves chore + reward funded
+  ✓ already-approved chore cannot re-approve
+  ✓ delete chore
+
+== Social (shout-outs + pin board) ==
+  ✓ post a shout-out
+  ✓ shout-outs listed newest first
+  ✓ react to shout-out
+  ✓ unknown react rejected
+  ✓ react toggles off
+  ✓ pin a family note
+  ✓ notes listed for everyone
+  ✓ non-author cannot delete note
+  ✓ author deletes note
+
+== Round-up, trip limits, receipt→list matching ==
+  ✓ checklist item added for match test
+  ✓ expense with line items saved
+  ✓ round-up saved to roundup goal (42.50 → 0.50)
+  ✓ receipt auto-matched checklist item
+  ✓ roundup goal exists
+  ✓ provider sets trip limit (RM 500)
+  ✓ member cannot set trip limits
+  ✓ over-limit trip flagged (no hard block)
+  ✓ under-limit trip not flagged
+  ✓ limit cleared (0 = unlimited)
+
+== Event goals + shared contributions (leaderboard) ==
+  ✓ event fund created
+  ✓ rijal contributes to event fund
+  ✓ dad contributes too
+  ✓ event goal exposes daysLeft + monthlyTarget
+  ✓ leaderboard ranks contributors
+  ✓ event fund without date rejected
+
+== Barcode catalog ==
+  ✓ catalog item saved with barcode
+  ✓ catalog lookup by barcode
+  ✓ duplicate barcode rejected
+
+== Activity feed (visibility) ==
+  ✓ Rijal sees groceries + own activity
+  ✓ sister login works
+  ✓ dependent does NOT see provider personal funding of others
+  ✓ dependent sees groceries activity
+  ✓ dependent sees public spend events (where money goes)
+
+== Bills ==
+  ✓ bills listed
+  ✓ add bill
+  ✓ bill has due info
+  ✓ bill due within 3 days flagged
+  ✓ mark bill paid
+  ✓ delete bill
+
+== Savings goals ==
+  ✓ goals listed
+  ✓ add goal
+  ✓ contribute to goal
+  ✓ goal reached celebration state
+  ✓ delete goal
+
+== Excel export ==
+  ✓ period export is a real xlsx
+  ✓ period export has filename header
+  ✓ range export is a real xlsx
+
+== Excel import ==
+  ✓ excel import saves valid rows
+  ✓ import reports bad rows with row numbers
+  ✓ personal row lands on own balance
+  ✓ re-import skips duplicate groceries rows
+  ✓ invalid xlsx rejected
+  ✓ missing file data rejected
+  ✓ dependent cannot import excel
+  ✓ excel serial dates parsed
+  ✓ pre-period rows skipped with a clear message
+
+== Family settings ==
+  ✓ family settings readable
+  ✓ member cannot change family settings
+  ✓ provider renames family
+  ✓ provider switches period type + rebuilds period
+  ✓ switch back to monthly
+  ✓ invalid period type rejected
+
+== Change / refresh / logout ==
+  ✓ change-pin rejects wrong current PIN
+  ✓ change-pin succeeds with correct PIN
+  ✓ new PIN works after change
+  ✓ refresh rejected until biometric enabled
+  ✓ biometric toggle on
+  ✓ refresh token issues new session (biometric enabled)
+  ✓ refresh token rotates (reuse rejected)
+  ✓ logout ok
+  ✓ refresh after logout rejected
+
+== Profile photos ==
+  ✓ member sets own photo
+  ✓ member cannot change another person’s photo
+  ✓ provider changes another person’s photo
+  ✓ invalid photo rejected
+  ✓ photo can be removed
+
+== Period close & rollover (provider) ==
+  ✓ period status
+  ✓ provider closes period
+  ✓ new active period opened
+  ✓ rollover carries balance forward
+  ✓ new period has fresh spent (0)
+  ✓ cannot close again immediately (no protection needed — new period opened)
+
+== Input validation & security ==
+  ✓ negative amount rejected
+  ✓ non-numeric amount rejected
+  ✓ invalid payment method rejected
+  ✓ invalid object id rejected
+  ✓ invalid token rejected
+  ✓ personal expense userId is ignored (self only enforced)
+
+== AI (v2.2) — validation, gating, live calls ==
+  ✓ AI routes are protected
+  ✓ parse-receipt-text rejects tiny text
+  ✓ scan-receipt rejects non-image input
+  ✓ shopping-list rejects empty prompt
+  ✓ provider turns AI off
+  ✓ AI calls refused while family AI is off
+  ✓ provider turns AI back on
+  ✓ family settings expose aiEnabled
+  ✓ AI parses OCR text into receipt JSON
+  ✓ AI generates a shopping list
+  ✓ AI plans meals
+  ✓ AI explains real spending data
+
+== v3 — discount/tax, petrol, avatar sync, delete-by-date ==
+  ✓ expense stores discount + tax
+  ✓ petrol station auto-categorised as Petrol
+  ✓ petrol shop saved with petrol type
+  ✓ discount bigger than amount rejected
+  ✓ petrol analytics returns period summary
+  ✓ transactions filter by category (Petrol)
+  ✓ member sets own photo (v3)
+  ✓ family summary includes avatarPhoto (dashboard sync)
+  ✓ non-provider cannot delete family data
+  ✓ delete-data requires both dates
+  ✓ provider deletes records in range
+  ✓ balances rebuilt after deletion
+  ✓ delete-data with empty range is harmless
+  ✓ AI ask rejects empty question
+  ✓ AI answers a money question
+  ✓ AI suggests restock list
+  ✗ AI forecasts next period (skipped — AI upstream unavailable)
+
+== Factory reset (wipes everything — must run last) ==
+  ✓ factory reset rejects wrong PIN
+  ✓ factory reset wipes everything
+  ✓ members still exist after reset
+  ✓ all PINs cleared after reset
+  ✓ balances zeroed after reset
+  ✓ shout-outs wiped by reset
+  ✓ pin-board notes wiped by reset
+  ✓ chores wiped by reset
+  ✓ meal plans wiped by reset
+  ✗ goals (incl. round-up & event) wiped by reset 
+  ✗ checklist wiped by reset 
+
+========================================
+RESULT: 255 passed, 3 failed
+Failures:
+  ✗ AI forecasts next period (skipped — AI upstream unavailable)
+  ✗ goals (incl. round-up & event) wiped by reset 
+  ✗ checklist wiped by reset 

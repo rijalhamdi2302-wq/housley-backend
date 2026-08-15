@@ -670,6 +670,64 @@ async function main() {
   })();
   check('AI explains real spending data', aiUpstreamOk(aiInsRes) && Array.isArray(aiInsRes.data.insights) && aiInsRes.data.insights.length > 0, aiSkipped(aiInsRes) ? '(skipped — AI upstream unavailable)' : JSON.stringify(aiInsRes.data).slice(0, 160));
 
+  console.log('\n== v3 — discount/tax, petrol, avatar sync, delete-by-date ==');
+  // Discount + tax recorded as metadata; petrol station auto-categorised.
+  const petrolExp = await req('POST', '/expenses/groceries', {
+    token: rijalToken,
+    body: { shopName: 'Petronas Batu Caves', amount: 6000, category: '', paymentMethod: 'cash', discount: 300, tax: 500, lineItems: [{ name: 'RON95', quantity: 1, unitPrice: 6000, totalPrice: 6000 }] },
+  });
+  check('expense stores discount + tax', petrolExp.status === 201 && petrolExp.data.expense.discount === 300 && petrolExp.data.expense.tax === 500, JSON.stringify(petrolExp.data.expense).slice(0, 200));
+  check('petrol station auto-categorised as Petrol', petrolExp.status === 201 && petrolExp.data.expense.category === 'Petrol');
+  const petShop = await req('GET', '/expenses/shops', { token: rijalToken });
+  const petronas = (petShop.data.shops || []).find((s) => s.name.includes('Petronas'));
+  check('petrol shop saved with petrol type', Boolean(petronas) && petronas.type === 'petrol', JSON.stringify(petronas));
+  const badDiscount = await req('POST', '/expenses/groceries', { token: rijalToken, body: { shopName: 'X', amount: 100, discount: 500, paymentMethod: 'cash' } });
+  check('discount bigger than amount rejected', badDiscount.status === 400);
+
+  const petrolSum = await req('GET', '/analytics/petrol', { token: rijalToken });
+  check('petrol analytics returns period summary', petrolSum.status === 200 && petrolSum.data.total >= 6000 && petrolSum.data.trips >= 1, JSON.stringify(petrolSum.data).slice(0, 160));
+  const petrolTx = await req('GET', '/transactions/expenses?cat=Petrol', { token: rijalToken });
+  check('transactions filter by category (Petrol)', petrolTx.status === 200 && petrolTx.data.expenses.some((e) => e.category === 'Petrol'));
+
+  // Dashboard avatar sync — a photo set on one member shows in the summary.
+  const photoData2 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const setPhoto2 = await req('PATCH', '/auth/photo', { token: rijalToken, body: { avatarPhoto: photoData2 } });
+  check('member sets own photo (v3)', setPhoto2.status === 200);
+  const sumWithPhoto = await req('GET', '/analytics/family/summary', { token: dadToken });
+  const rijalInSummary = (sumWithPhoto.data.personal || []).find((p) => String(p.user._id) === String(rijal._id));
+  check('family summary includes avatarPhoto (dashboard sync)', Boolean(rijalInSummary?.user?.avatarPhoto), JSON.stringify(rijalInSummary?.user));
+
+  // Delete-by-date range — provider only, balances rebuilt.
+  const depDel = await req('POST', '/family/delete-data', { token: momToken, body: { from: '2020-01-01', to: '2030-01-01' } });
+  check('non-provider cannot delete family data', depDel.status === 403);
+  const badRange = await req('POST', '/family/delete-data', { token: dadToken, body: { from: '2025-01-01' } });
+  check('delete-data requires both dates', badRange.status === 400);
+  const gbDelBefore = (await req('GET', '/funding/balances/groceries', { token: dadToken })).data.balance;
+  const today = new Date();
+  const fromD = new Date(today); fromD.setDate(fromD.getDate() - 2);
+  const delRes = await req('POST', '/family/delete-data', { token: dadToken, body: { from: fromD.toISOString().slice(0, 10), to: today.toISOString().slice(0, 10) } });
+  check('provider deletes records in range', delRes.status === 200 && delRes.data.ok === true && (delRes.data.deleted.expenses > 0), JSON.stringify(delRes.data).slice(0, 160));
+  const gbDelAfter = (await req('GET', '/funding/balances/groceries', { token: dadToken })).data.balance;
+  check('balances rebuilt after deletion', gbDelAfter.spent < gbDelBefore.spent, `before ${gbDelBefore.spent} after ${gbDelAfter.spent}`);
+  const delZero = await req('POST', '/family/delete-data', { token: dadToken, body: { from: '1990-01-01', to: '1991-01-01' } });
+  check('delete-data with empty range is harmless', delZero.status === 200 && delZero.data.deleted.expenses === 0);
+
+  // v3 AI — Q&A, restock, forecast (validation + gating, live calls tolerant of upstream).
+  const askEmpty = await req('POST', '/ai/ask', { token: rijalToken, body: { question: '  ' } });
+  check('AI ask rejects empty question', askEmpty.status === 400);
+  const aiAskRes = await (async () => {
+    try { return await req('POST', '/ai/ask', { token: rijalToken, body: { question: 'How much did we spend at Petronas?' } }); } catch { return { status: -1 }; }
+  })();
+  check('AI answers a money question', aiUpstreamOk(aiAskRes) && aiAskRes.data.answer && aiAskRes.data.answer.length > 0, aiSkipped(aiAskRes) ? '(skipped — AI upstream unavailable)' : JSON.stringify(aiAskRes.data).slice(0, 160));
+  const aiRestockRes = await (async () => {
+    try { return await req('POST', '/ai/restock', { token: rijalToken, body: {} }); } catch { return { status: -1 }; }
+  })();
+  check('AI suggests restock list', aiUpstreamOk(aiRestockRes) && Array.isArray(aiRestockRes.data.items), aiSkipped(aiRestockRes) ? '(skipped — AI upstream unavailable)' : JSON.stringify(aiRestockRes.data).slice(0, 160));
+  const aiForecastRes = await (async () => {
+    try { return await req('POST', '/ai/forecast', { token: rijalToken, body: {} }); } catch { return { status: -1 }; }
+  })();
+  check('AI forecasts next period', aiUpstreamOk(aiForecastRes) && (aiForecastRes.data.estimate > 0 || aiForecastRes.data.skipAI), aiSkipped(aiForecastRes) ? '(skipped — AI upstream unavailable)' : JSON.stringify(aiForecastRes.data).slice(0, 160));
+
   console.log('\n== Factory reset (wipes everything — must run last) ==');
   const resetWrong = await req('POST', '/auth/factory-reset', { body: { pin: '0000' } });
   check('factory reset rejects wrong PIN', resetWrong.status === 403);
@@ -690,9 +748,9 @@ async function main() {
   const mealsAfter = await req('GET', '/meals', { token: dadToken });
   check('meal plans wiped by reset', mealsAfter.status === 200 && mealsAfter.data.meals.length === 0);
   const goalsAfterReset = await req('GET', '/goals', { token: dadToken });
-  check('goals (incl. round-up & event) wiped by reset', goalsAfterReset.status === 200 && goalsAfterReset.data.goals.length === 0, JSON.stringify(goalsAfterReset.data.goals));
+  check('goals (incl. round-up & event) wiped by reset', goalsAfterReset.status === 200 && goalsAfterReset.data.goals.length === 0, `status ${goalsAfterReset.status} body ${JSON.stringify(goalsAfterReset.data).slice(0, 120)}`);
   const checkAfter = await req('GET', '/checklist', { token: dadToken });
-  check('checklist wiped by reset', checkAfter.status === 200 && checkAfter.data.items.length === 0);
+  check('checklist wiped by reset', checkAfter.status === 200 && checkAfter.data.items.length === 0, `status ${checkAfter.status} body ${JSON.stringify(checkAfter.data).slice(0, 120)}`);
 
   console.log('\n========================================');
   console.log(`RESULT: ${passed} passed, ${failed} failed`);

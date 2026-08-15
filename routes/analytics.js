@@ -445,6 +445,42 @@ router.get(
   })
 );
 
+/** GET /api/analytics/petrol — the family's petrol spend (active period). */
+router.get(
+  '/petrol',
+  ah(async (req, res) => {
+    const family = await getFamily();
+    const period = await getActivePeriod(family._id);
+    if (!period) return res.json({ total: 0, trips: 0, avgPerTrip: 0, byStation: [], recent: [] });
+    const expenses = await ExpenseTransaction.find({
+      familyId: family._id,
+      periodId: period._id,
+      category: 'Petrol',
+    })
+      .select('amount shopName createdAt spentById')
+      .sort({ createdAt: -1 })
+      .lean();
+    const total = expenses.reduce((s, e) => s + (e.amount || 0), 0);
+    const byStation = groupBy(expenses, (e) => (e.shopName || 'Petrol station').trim() || 'Petrol station');
+    byStation.sort((a, b) => b.value - a.value);
+    const users = await require('../models').User.find({ familyId: family._id }).select('name').lean();
+    const nameMap = new Map(users.map((u) => [String(u._id), u.name]));
+    res.json({
+      total,
+      trips: expenses.length,
+      avgPerTrip: expenses.length ? Math.round(total / expenses.length) : 0,
+      byStation: byStation.slice(0, 6).map((r) => ({ name: r.key, amount: r.value, trips: r.items.length })),
+      recent: expenses.slice(0, 10).map((e) => ({
+        _id: e._id,
+        shopName: e.shopName,
+        amount: e.amount,
+        createdAt: e.createdAt,
+        spentByName: nameMap.get(String(e.spentById)) || 'Family',
+      })),
+    });
+  })
+);
+
 /** GET /api/analytics/family/summary — overview used by the Home screen. */
 router.get(
   '/family/summary',
@@ -481,7 +517,8 @@ router.get(
       if (!canSeeAllBalances && String(u._id) !== String(req.user._id)) continue;
       const b = await getPersonalBalance(u._id, period._id);
       personal.push({
-        user: { _id: u._id, name: u.name, role: u.role, avatarColor: u.avatarColor },
+        // v3 — include avatarPhoto so photos set by any member show everywhere
+        user: { _id: u._id, name: u.name, role: u.role, avatarColor: u.avatarColor, avatarPhoto: u.avatarPhoto || null },
         funded: b.funded,
         spent: b.spent,
         currentBalance: b.funded - b.spent,

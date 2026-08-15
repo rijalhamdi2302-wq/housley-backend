@@ -1,0 +1,8 @@
+◇ injected env (4) from .env // tip: ⌘ enable debugging { debug: true }
+✓ Connected to MongoDB
+✓ Shops created
+✓ Past period 2026-04 created
+✓ Past period 2026-05 created
+✓ Past period 2026-06 created
+✓ Demo data created — open the app and explore!
+  Tip: delete any demo transaction in Transaction History to remove it (balances fix themselves).

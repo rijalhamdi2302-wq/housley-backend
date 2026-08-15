@@ -51,12 +51,14 @@ app.use(
 app.use(express.json({ limit: '8mb' }));
 app.use(express.urlencoded({ extended: true, limit: '8mb' }));
 
-// Global API rate limit (generous; per-route limits are tighter where it matters)
+// Global API rate limit (generous; per-route limits are tighter where it matters).
+// 480/min ≈ 8 req/s — a family of 5 never gets close; it still stops scripted
+// floods. (Bumped from 240 so the full test suite fits in one window.)
 app.use(
   '/api',
   rateLimit({
     windowMs: 60 * 1000,
-    limit: 240,
+    limit: 480,
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many requests. Please slow down.' },

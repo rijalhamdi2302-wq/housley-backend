@@ -45,13 +45,35 @@ function validateImage(image) {
   return image;
 }
 
+/** Clean optional discount/tax values (sen) — must be sane non-negative money. */
+function cleanAdjustment(v, label) {
+  if (v === undefined || v === null || v === '') return 0;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0 || n > 1_000_000_000) {
+    const err = new Error(`${label} must be a valid amount.`);
+    err.status = 400;
+    throw err;
+  }
+  return Math.round(n);
+}
+
+/** v3 — recognise a petrol station from its name (MY petrol brands). */
+const PETROL_KEYWORDS = ['petronas', 'shell', 'caltex', 'petron', 'bdp', 'bhp', 'esso', 'mobil', 'tecoil', 'federal oil', 'pump', 'petrol'];
+
+function isPetrolName(name) {
+  const n = String(name || '').toLowerCase();
+  if (!n) return false;
+  // short names ("Shell") should still match; but avoid "Shell" matching "Shellfish"
+  return PETROL_KEYWORDS.some((k) => n === k || n.startsWith(k + ' ') || n.includes(' ' + k) || n.includes(k + ' petrol'));
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/expenses/groceries — log a Groceries expense (provider/spender/member)
 // ---------------------------------------------------------------------------
 router.post(
   '/groceries',
   ah(async (req, res) => {
-    const { shopId, shopName, category, amount, paymentMethod, note, receiptImage, lineItems, imported } = req.body || {};
+    const { shopId, shopName, category, amount, paymentMethod, note, receiptImage, lineItems, imported, discount, tax, shopType } = req.body || {};
     if (!isValidMoney(amount)) return res.status(400).json({ error: 'A valid amount is required.' });
     if (!canSpendGroceries(req.user.role)) {
       return res.status(403).json({ error: 'Dependents cannot spend from the Groceries pool.' });
@@ -60,6 +82,11 @@ router.post(
       return res.status(400).json({ error: 'Invalid payment method.' });
     }
     const receipt = validateImage(receiptImage);
+    const discountSen = cleanAdjustment(discount, 'Discount');
+    const taxSen = cleanAdjustment(tax, 'Tax');
+    if (discountSen > amount) {
+      return res.status(400).json({ error: 'Discount cannot be bigger than the amount.' });
+    }
 
     const family = await getFamily();
     const period = await getActivePeriod(family._id);
@@ -78,17 +105,22 @@ router.post(
       });
     }
     if (!shop && cleanShopName) {
+      // v3 — recognise petrol stations automatically so petrol spend gets the
+      // right category without anyone having to pick it.
+      const petrolish = isPetrolName(cleanShopName) || shopType === 'petrol';
       shop = await Shop.create({
         familyId: family._id,
         name: cleanShopName,
-        type: 'other',
+        type: petrolish ? 'petrol' : 'other',
         usageCount: 0,
-        learnedCategory: '',
+        learnedCategory: petrolish ? 'Petrol' : '',
       });
     }
 
     // ---- Learned categorization -------------------------------------------------
     let cat = String(category || '').trim();
+    // v3 — a petrol station with no explicit category is always Petrol.
+    if (shop && shop.type === 'petrol' && !cat) cat = 'Petrol';
     if (shop && cat) shop.learnedCategory = cat;
     if (shop) {
       shop.usageCount += 1;
@@ -142,6 +174,8 @@ router.post(
       note: String(note || '').slice(0, 500),
       receiptImage: receipt,
       lineItems: items,
+      discount: discountSen,
+      tax: taxSen,
       flags,
       imported: Boolean(imported),
     });
@@ -237,12 +271,17 @@ router.post(
 router.post(
   '/personal',
   ah(async (req, res) => {
-    const { shopName, category, amount, paymentMethod, note, receiptImage } = req.body || {};
+    const { shopName, category, amount, paymentMethod, note, receiptImage, discount, tax } = req.body || {};
     if (!isValidMoney(amount)) return res.status(400).json({ error: 'A valid amount is required.' });
     if (paymentMethod && !PAYMENT_METHODS.includes(paymentMethod)) {
       return res.status(400).json({ error: 'Invalid payment method.' });
     }
     const receipt = validateImage(receiptImage);
+    const discountSen = cleanAdjustment(discount, 'Discount');
+    const taxSen = cleanAdjustment(tax, 'Tax');
+    if (discountSen > amount) {
+      return res.status(400).json({ error: 'Discount cannot be bigger than the amount.' });
+    }
 
     const family = await getFamily();
     const period = await getActivePeriod(family._id);
@@ -262,6 +301,8 @@ router.post(
       note: String(note || '').slice(0, 500),
       receiptImage: receipt,
       lineItems: [],
+      discount: discountSen,
+      tax: taxSen,
       flags: [],
     });
 
